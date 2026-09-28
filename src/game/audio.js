@@ -67,7 +67,7 @@ export class Audio {
     return { in: g, gain, send: (amt) => { const s = ctx.createGain(); s.gain.value = amt; p.connect(s); s.connect(this.reverb); } };
   }
   _src(buf, rate = 1, offset = Math.random() * 1.5) { const s = this.ctx.createBufferSource(); s.buffer = buf; s.playbackRate.value = rate; s.loop = false; s.start(this.ctx.currentTime, offset % Math.max(0.01, buf.duration - 0.5)); return s; }
-  _env(node, t0, a, peak, d, end = 0.0001) { node.gain.setValueAtTime(0.0001, t0); node.gain.exponentialRampToValueAtTime(peak, t0 + a); node.gain.exponentialRampToValueAtTime(Math.max(end, 0.0001), t0 + a + d); }
+  _env(node, t0, a, peak, d, end = 0.0001) { peak = Math.max(1e-4, +peak || 1e-4); a = Math.max(1e-4, a); d = Math.max(1e-3, d); node.gain.setValueAtTime(0.0001, t0); node.gain.exponentialRampToValueAtTime(peak, t0 + a); node.gain.exponentialRampToValueAtTime(Math.max(end, 0.0001), t0 + a + d); }
   _filter(type, f, q = 0.8) { const b = this.ctx.createBiquadFilter(); b.type = type; b.frequency.value = f; b.Q.value = q; return b; }
   _tone(freq, dur, { type = 'sine', vol = 0.3, pos = null, slide = 0, delay = 0 } = {}) {
     if (!this.ctx) return;
@@ -233,5 +233,10 @@ export class Audio {
     });
   }
   stopAll() { for (const k of Object.keys(this.loops)) this.setLoop(k, 0, 0.5); }
+}
+for (const k of Object.getOwnPropertyNames(Audio.prototype)) {
+  const f = Audio.prototype[k];
+  if (k === 'constructor' || typeof f !== 'function') continue;
+  Audio.prototype[k] = function (...args) { try { return f.apply(this, args); } catch (e) { if (!this._warned) { console.warn('audio', k, e); this._warned = true; } return undefined; } };
 }
 export const audio = new Audio();

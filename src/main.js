@@ -178,6 +178,14 @@ addEventListener('keydown', (e) => {
 let skipHold = 0, fpsAvg = 60;
 function loop(now) {
   if (!running) return;
+  try { frame(now); } catch (err) {
+    console.error(err);
+    let el = $('errLine'); if (!el) { el = document.createElement('div'); el.id = 'errLine'; el.style.cssText = 'position:fixed;left:8px;top:8px;z-index:99;color:#ff6a5a;font:13px monospace;background:rgba(0,0,0,.6);padding:4px 8px;pointer-events:none'; document.body.appendChild(el); } el.textContent = 'Error: ' + err.message + ' @ ' + ((err.stack || '').split('\n')[1] || '').trim();
+    last = performance.now();
+  }
+  requestAnimationFrame(loop);
+}
+function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
   fpsAvg += (1 / Math.max(dt, 1e-3) - fpsAvg) * 0.05;
   if (!paused && (state === 'playing' || state === 'dead' || state === 'complete')) {
@@ -211,7 +219,6 @@ function loop(now) {
     pressed.clear();
   }
   pressed.clear();
-  requestAnimationFrame(loop);
 }
 
 // ---------------------------------------------------------------- automated test hooks (?auto=...)
