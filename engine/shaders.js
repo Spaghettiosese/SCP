@@ -7,6 +7,11 @@ layout(location=2) in vec2 aUV;
 layout(location=3) in vec4 aJoints;
 layout(location=4) in vec4 aWeights;
 layout(location=5) in vec3 aRest;
+layout(location=6) in vec4 aI0;
+layout(location=7) in vec4 aI1;
+layout(location=8) in vec4 aI2;
+layout(location=9) in vec4 aI3;
+uniform bool uInstanced;  // per-instance model matrix in attributes 6..9
 uniform mat4 uModel;      // world transform (character root for skinned meshes)
 uniform mat4 uLocal;      // part transform (applied before skinning)
 uniform mat4 uViewProj;
@@ -30,10 +35,12 @@ void main(){
     mat4 s = aWeights.x*jointMat(int(aJoints.x)) + aWeights.y*jointMat(int(aJoints.y)) + aWeights.z*jointMat(int(aJoints.z)) + aWeights.w*jointMat(int(aJoints.w));
     lp = s * lp; ln = mat3(s) * ln;
   }
-  vec4 wp = uModel * lp;
-  vec3 n = normalize(mat3(uModel) * ln);
+  mat4 inst = uInstanced ? mat4(aI0, aI1, aI2, aI3) : mat4(1.0);
+  vec4 wp = uModel * inst * lp;
+  vec3 n = normalize(mat3(uModel) * mat3(inst) * ln);
   wp.xyz += n * uInflate;
-  vWorld = wp.xyz; vNormal = n; vUV = aUV; vRest = aRest; vRestN = aNormal;
+  // instances get their own pattern offset so repeated props don't look identical
+  vWorld = wp.xyz; vNormal = n; vUV = aUV; vRest = aRest + (uInstanced ? aI3.xyz * 0.731 : vec3(0.0)); vRestN = aNormal;
   vShadow = uShadowVP * vec4(wp.xyz + n*0.02, 1.0);
   gl_Position = uViewProj * wp;
 }`;
@@ -57,6 +64,33 @@ vec2 voronoi(vec3 p){
   return vec2(sqrt(d1), sqrt(d2));
 }`;
 
+
+// V3 weather: damp surfaces, puddles on flat ground and rain ripples in the puddles.
+export const WET = /* glsl */ `
+uniform float uWetness; uniform float uRain;
+float puddleMask(vec3 wp, vec3 n){
+  if(uWetness <= 0.0) return 0.0;
+  float up = smoothstep(0.8, 0.97, n.y);
+  vec3 q = vec3(wp.x, 0.0, wp.z);
+  float m = fbm(q * 0.42) + 0.15 * fbm(q * 2.7 + 5.0);
+  float th = 0.8 - uWetness * 0.3;
+  return up * smoothstep(th, th + 0.035, m);
+}
+vec2 rainRipples(vec2 p, float t){
+  vec2 acc = vec2(0.0);
+  for(int j = -1; j <= 1; j++) for(int i = -1; i <= 1; i++){
+    vec2 c = floor(p) + vec2(float(i), float(j));
+    float h = hash12(c);
+    vec2 o = c + vec2(hash12(c + 3.1), hash12(c + 7.7));
+    float ph = fract(t * 0.85 + h);
+    vec2 d = p - o; float r = length(d);
+    float w = exp(-pow((r - ph * 0.8) * 16.0, 2.0)) * (1.0 - ph) * sin((r - ph * 0.8) * 60.0);
+    acc += (r > 1e-4 ? d / r : vec2(0.0)) * w;
+  }
+  return acc;
+}
+`;
+
 export const MAIN_FS = /* glsl */ `#version 300 es
 precision highp float;
 precision highp sampler2DShadow;
@@ -71,23 +105,26 @@ uniform int uPattern; uniform float uPatternScale; uniform vec3 uPatternColor; u
 uniform int uShading;   // 0 PBR, 1 studio solid, 2 flat, 3 toon, 4 ghost, 5 normals
 uniform vec4 uFlatColor;
 uniform float uOpacity;
-uniform bool uDoubleSided;
-uniform float uTime;
-// --- SCP game extensions: dynamic lights, textures, world-space patterns, wet surfaces
-#define MAX_LIGHTS 16
-uniform int uNumLights;
-uniform vec4 uLightPos[MAX_LIGHTS];   // xyz, range
-uniform vec4 uLightColor[MAX_LIGHTS]; // rgb * intensity, w = spot outer cos (-2 = point light)
-uniform vec4 uLightDir[MAX_LIGHTS];   // spot direction, w = spot inner cos
-uniform int uShadowLight;             // -1: the sun owns the shadow map, else a spot light index
-uniform float uShadowBias;
 uniform sampler2D uTex; uniform bool uHasTex; uniform float uAlphaTest;
 uniform bool uUnlit; uniform bool uAdditive; uniform bool uWorldPattern;
-uniform float uWet;
+vec2 domUV(vec3 p, vec3 w){ return (w.y > w.x && w.y > w.z) ? p.xz : (w.x > w.z ? p.zy : p.xy); }
+uniform bool uDoubleSided;
+uniform float uTime;
+// V2 lighting
+#define MAX_LIGHTS 16
+uniform int uLightCount;
+uniform vec4 uLightPos[MAX_LIGHTS];   // xyz position, w range
+uniform vec4 uLightColor[MAX_LIGHTS]; // rgb * intensity, w: 0 point / 1 spot
+uniform vec4 uLightSpot[MAX_LIGHTS];  // xyz direction, w cos(outer angle)
+uniform sampler2D uAO; uniform bool uUseAO; uniform vec2 uScreen; uniform float uAOStrength;
+uniform float uFogHeight;             // height falloff (0 = uniform fog)
+// V3: soft (PCSS) and contact shadows
+uniform sampler2D uShadowRaw; uniform float uShadowSoft;  // penumbra scale (0 = plain PCF)
+uniform sampler2D uGBuf; uniform bool uContact; uniform mat4 uView; uniform mat4 uProj;
 out vec4 outColor;
 ${NOISE}
+${WET}
 const float PI = 3.14159265;
-vec2 domUV(vec3 p, vec3 w){ return (w.y > w.x && w.y > w.z) ? p.xz : (w.x > w.z ? p.zy : p.xy); }
 
 struct Surf { vec3 albedo; float rough; float metal; float h; float bump; float ao; };
 
@@ -217,6 +254,63 @@ Surf pattern(Surf s){
     s.albedo *= 0.94 + 0.1*mix(0.5, pore, g);
     s.rough = clamp(s.rough + (streak-0.5)*0.2, 0.1, 1.0);
     s.h = streak*0.25 + pore*0.08*g; s.bump = 0.15;
+  } else if(uPattern==15){ // planks: horizontal boards with gaps and grain (siding, floors)
+    float y = rp.y + (vRestN.y > 0.7 || vRestN.y < -0.7 ? rp.z : 0.0);
+    float along = abs(vRestN.x) > abs(vRestN.z) ? rp.z : rp.x;
+    if(abs(vRestN.y) > 0.7){ y = rp.z; along = rp.x; }
+    float row = floor(y);
+    float fy = fract(y);
+    float seam = smoothstep(0.0, 0.05, fy) * (1.0 - smoothstep(0.93, 1.0, fy));
+    float board = hash12(vec2(row, 3.1));
+    float endj = step(0.97, fract(along * 0.35 + board * 7.0));
+    float grain = fbm(vec3(along * 0.8, y * 14.0, board * 10.0));
+    float g = aaFade(fw * 3.0);
+    s.albedo *= mix(1.0, (0.78 + 0.35 * board) * (0.86 + 0.3 * grain * g), k);
+    s.albedo = mix(s.albedo, uPatternColor, (1.0 - seam) * 0.8 * k + endj * 0.5 * k);
+    s.h = seam * 0.6 + grain * 0.2 * g - endj * 0.4; s.bump = 0.45;
+    s.rough = clamp(s.rough + (board - 0.5) * 0.2, 0.2, 1.0);
+  } else if(uPattern==16){ // brick with mortar
+    vec3 w3 = w;
+    vec2 p2 = w3.x > max(w3.y, w3.z) ? rp.zy : (w3.y > w3.z ? rp.xz : rp.xy);
+    vec2 b = vec2(p2.x * 0.5, p2.y);
+    b.x += 0.5 * mod(floor(b.y), 2.0);
+    vec2 f = fract(b), c = floor(b);
+    float e = clamp(fw * 1.5, 0.02, 0.2);
+    float mortar = smoothstep(0.0, e + 0.04, f.x) * smoothstep(0.0, e + 0.08, f.y) * (1.0 - smoothstep(1.0 - e - 0.04, 1.0, f.x)) * (1.0 - smoothstep(1.0 - e - 0.08, 1.0, f.y));
+    float tone = hash12(c);
+    s.albedo *= mix(1.0, 0.72 + 0.45 * tone + 0.1 * (fbm(rp * 3.0) - 0.5), k);
+    s.albedo = mix(uPatternColor, s.albedo, mortar);
+    s.h = mortar * 0.7 + fbm(rp * 6.0) * 0.1; s.bump = 0.6;
+    s.rough = mix(0.95, s.rough, mortar);
+  } else if(uPattern==17){ // shingles (roofs): staggered rows of rounded tiles
+    vec2 p2 = abs(vRestN.x) > abs(vRestN.z) ? vec2(rp.z, rp.y) : vec2(rp.x, rp.y);
+    if(abs(vRestN.y) > 0.3) p2 = vec2(abs(vRestN.x) > abs(vRestN.z) ? rp.z : rp.x, rp.y + (abs(vRestN.x) > abs(vRestN.z) ? rp.x : rp.z));
+    p2.x += 0.5 * mod(floor(p2.y), 2.0);
+    vec2 f = fract(p2), c = floor(p2);
+    float edge = smoothstep(0.0, 0.12, f.y) * smoothstep(0.0, 0.06, min(f.x, 1.0 - f.x));
+    float tone = hash12(c + 7.0);
+    s.albedo *= mix(1.0, (0.7 + 0.5 * tone) * (0.55 + 0.45 * edge), k);
+    s.h = f.y * 0.8 + edge * 0.2; s.bump = 0.55;
+  } else if(uPattern==18){ // stucco / adobe: lumpy plaster with soft staining
+    float n = fbm(rp * 1.5), n2 = fbm(rp * 9.0 + 3.0);
+    float stain = smoothstep(0.45, 0.8, fbm(vec3(rp.x * 0.4, rp.y * 1.6, rp.z * 0.4) + 11.0));
+    s.albedo *= mix(1.0, 0.88 + 0.22 * n + 0.08 * n2, k);
+    s.albedo = mix(s.albedo, uPatternColor, stain * 0.35 * k * smoothstep(0.6, 0.0, fract(vRest.y * 0.4)));
+    s.h = n * 0.6 + n2 * 0.4; s.bump = 0.7;
+  } else if(uPattern==19){ // window glass: dark reflective panes, warm glow when emissive
+    vec2 p2 = abs(vRestN.x) > abs(vRestN.z) ? rp.zy : rp.xy;
+    vec2 f = fract(p2);
+    float mull = 1.0 - smoothstep(0.03, 0.06, min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y)));
+    s.albedo = mix(s.albedo, uPatternColor, mull);
+    s.rough = mix(0.05, 0.7, mull); s.metal = mix(0.4, 0.0, mull);
+    s.ao = 1.0 - mull; // mullions block the interior glow
+  } else if(uPattern==20){ // corrugated metal
+    float a = abs(vRestN.x) > abs(vRestN.z) ? rp.z : rp.x;
+    float wave = sin(a * 6.2831);
+    float rust = smoothstep(0.5, 0.8, fbm(rp * 0.3 + 5.0));
+    s.albedo = mix(s.albedo, uPatternColor, rust * k);
+    s.metal = mix(s.metal, 0.1, rust); s.rough = mix(s.rough, 0.9, rust);
+    s.h = wave * 0.5 + 0.5; s.bump = 0.5 * aaFade(fw);
   } else if(uPattern==13){ // eye: iris + pupil around +Z of the rest normal
     float r = length(vRestN.xy);
     float z = vRestN.z;
@@ -227,7 +321,9 @@ Surf pattern(Surf s){
     s.albedo = mix(s.albedo, irisC, iris);
     s.albedo = mix(s.albedo, vec3(0.02), pupil);
     s.rough = 0.06;
-  } else if(uPattern==15){ // concrete: formwork panels, tie holes, stains, pits
+  }
+  // --- SCP game patterns
+  if(uPattern==21){ // concrete: formwork panels, tie holes, stains, pits
     float n = fbm(rp*0.9), n2 = vnoise(rp*14.0);
     float stains = smoothstep(0.5, 0.85, fbm(rp*vec3(0.35,1.8,0.35)+2.0));
     vec2 uv = domUV(rp*0.42, an);
@@ -242,7 +338,7 @@ Surf pattern(Surf s){
     s.albedo *= 1.0 - pit*0.4 - seam*0.35 - tie;
     s.h = n2*0.25*aaFade(fw*14.0) - pit*0.8 - seam*0.6 + n*0.2; s.bump = 0.6;
     s.rough = clamp(s.rough + (n-0.5)*0.25, 0.25, 1.0);
-  } else if(uPattern==16){ // floor / wall tiles with grout, per-tile tint and grime
+  } else if(uPattern==22){ // floor / wall tiles with grout, per-tile tint and grime
     vec2 uv = domUV(rp, an);
     vec2 c = floor(uv), f = fract(uv);
     float e = min(min(f.x, 1.0-f.x), min(f.y, 1.0-f.y));
@@ -254,14 +350,14 @@ Surf pattern(Surf s){
     s.albedo *= 1.0 - grime*0.35*k;
     s.rough = mix(s.rough, 0.95, max(grout, grime*0.5));
     s.h = -grout*0.6 + (1.0-grout)*smoothstep(0.0,0.08,e)*0.2; s.bump = 0.6;
-  } else if(uPattern==17){ // hazard stripes (yellow/black) with scuffs
+  } else if(uPattern==23){ // hazard stripes (yellow/black) with scuffs
     vec2 uv = domUV(rp, an);
     float st = smoothstep(0.48, 0.52, fract((uv.x + uv.y)*0.5)) - smoothstep(0.98, 1.0, fract((uv.x + uv.y)*0.5));
     float wear = smoothstep(0.55, 0.8, fbm(rp*1.7));
     s.albedo = mix(s.albedo, uPatternColor, st);
     s.albedo = mix(s.albedo, vec3(0.35,0.33,0.3), wear*0.6*k);
     s.rough = mix(s.rough, 0.9, wear); s.h = wear*0.2; s.bump = 0.3;
-  } else if(uPattern==18){ // sci-fi wall panels: seams, rivets, variation
+  } else if(uPattern==24){ // sci-fi wall panels: seams, rivets, variation
     vec2 uv = domUV(rp, an) * vec2(1.0, 0.5);
     vec2 c = floor(uv), f = fract(uv);
     float e = min(min(f.x, 1.0-f.x), min(f.y, 1.0-f.y)*2.0);
@@ -277,14 +373,14 @@ Surf pattern(Surf s){
     s.albedo *= 1.0 - seam*0.6;
     s.rough = clamp(s.rough + (tint-0.5)*0.15 + grime*0.2, 0.08, 1.0);
     s.h = -seam + rivet*0.8; s.bump = 0.5;
-  } else if(uPattern==19){ // rusty painted metal
+  } else if(uPattern==25){ // rusty painted metal
     float n = fbm(rp*1.3), n2 = vnoise(rp*18.0);
     float rust = smoothstep(0.45, 0.7, n + 0.25*fbm(rp*vec3(0.5,3.0,0.5)));
     vec3 rc = uPatternColor * (0.7 + 0.5*n2);
     s.albedo = mix(s.albedo * (0.9 + 0.15*n2), rc, rust*k);
     s.metal = mix(s.metal, 0.1, rust); s.rough = mix(s.rough, 0.95, rust);
     s.h = rust*0.4 + n2*0.15*rust; s.bump = 0.5;
-  } else if(uPattern==20){ // floor grating
+  } else if(uPattern==26){ // floor grating
     vec2 uv = domUV(rp, an);
     vec2 f = fract(uv*vec2(1.0, 4.0));
     float bar = max(1.0 - smoothstep(0.08, 0.14, abs(f.x-0.5)*2.0 - 0.0) , 0.0);
@@ -293,11 +389,11 @@ Surf pattern(Surf s){
     s.albedo *= mix(1.0, mix(1.0, 0.12, slot), g);
     s.h = (1.0 - slot)*g; s.bump = 0.8; s.rough = mix(s.rough, 1.0, slot*g);
     s.albedo = mix(s.albedo, uPatternColor, smoothstep(0.55,0.9,fbm(rp*0.6))*0.5*k);
-  } else if(uPattern==21){ // rubber / polymer
+  } else if(uPattern==27){ // rubber / polymer
     float n = vnoise(rp*30.0), m = fbm(rp*2.0);
     s.albedo *= 0.92 + 0.12*m;
     s.h = n*0.3*aaFade(fw*30.0); s.bump = 0.2;
-  } else if(uPattern==22){ // wet asphalt with puddles and paint wear
+  } else if(uPattern==28){ // wet asphalt with puddles and paint wear
     float n = vnoise(rp*25.0), m = fbm(rp*0.25);
     float speck = step(0.8, hash13(floor(rp*60.0))) * aaFade(fw*60.0);
     float puddle = smoothstep(0.52, 0.6, m + 0.1*fbm(rp*2.0));
@@ -306,7 +402,7 @@ Surf pattern(Surf s){
     s.albedo *= 1.0 - puddle*0.45;
     s.rough = mix(s.rough, 0.04, puddle);
     s.h = (n*0.3 + speck*0.3)*(1.0-puddle)*aaFade(fw*25.0); s.bump = 0.7;
-  } else if(uPattern==23){ // camo blotches (three tones)
+  } else if(uPattern==29){ // camo blotches (three tones)
     float a = fbm(rp*1.0 + 11.0), b = fbm(rp*1.6 + 3.0);
     s.albedo = mix(s.albedo, uPatternColor, smoothstep(0.5, 0.53, a)*k);
     s.albedo = mix(s.albedo, s.albedo*0.55, smoothstep(0.55, 0.58, b)*k);
@@ -330,14 +426,42 @@ float shadowFactor(vec3 N){
   if(!uShadows) return 1.0;
   vec3 sc = vShadow.xyz / vShadow.w * 0.5 + 0.5;
   if(sc.x<0.0||sc.x>1.0||sc.y<0.0||sc.y>1.0||sc.z>1.0) return 1.0;
-  float bias = uShadowLight >= 0 ? uShadowBias : 0.0008 + 0.0015*(1.0-max(dot(N,uSunDir),0.0));
+  float bias = 0.0008 + 0.0015*(1.0-max(dot(N,uSunDir),0.0));
   float ang = hash12(gl_FragCoord.xy)*6.2831;
   mat2 R = mat2(cos(ang),sin(ang),-sin(ang),cos(ang));
   vec2 taps[12] = vec2[](vec2(-0.326,-0.406),vec2(-0.840,-0.074),vec2(-0.696,0.457),vec2(-0.203,0.621),vec2(0.962,-0.195),vec2(0.473,-0.480),
                          vec2(0.519,0.767),vec2(0.185,-0.893),vec2(0.507,0.064),vec2(0.896,0.412),vec2(-0.322,-0.933),vec2(-0.792,-0.598));
+  float radius = 2.2;
+  if(uShadowSoft > 0.0){
+    // PCSS: average blocker depth -> penumbra width, so shadows are sharp at contact and soften with distance
+    float bsum = 0.0, bn = 0.0;
+    for(int i=0;i<12;i++){ float d = texture(uShadowRaw, sc.xy + R*taps[i]*uShadowTexel*14.0).r; if(d < sc.z - bias){ bsum += d; bn += 1.0; } }
+    if(bn < 0.5) return 1.0;
+    float pen = (sc.z - bsum/bn) * uShadowSoft / uShadowTexel;
+    radius = clamp(pen, 1.2, 16.0);
+  }
   float s = 0.0;
-  for(int i=0;i<12;i++){ s += texture(uShadowMap, vec3(sc.xy + R*taps[i]*uShadowTexel*2.2, sc.z - bias)); }
+  for(int i=0;i<12;i++){ s += texture(uShadowMap, vec3(sc.xy + R*taps[i]*uShadowTexel*radius, sc.z - bias)); }
   return s/12.0;
+}
+
+// Screen-space contact shadows: a short ray toward the sun through the depth buffer catches
+// the small, sharp shadows (feet on the floor, props on shelves) the shadow map is too coarse for.
+float contactShadow(vec3 wp, vec3 N){
+  if(!uContact) return 1.0;
+  vec3 vp = (uView * vec4(wp + N*0.015, 1.0)).xyz, vl = mat3(uView) * uSunDir;
+  float j = hash12(gl_FragCoord.xy + uTime);
+  for(int i = 0; i < 10; i++){
+    float t = 0.03 + (float(i) + j) * 0.03;
+    vec3 q = vp + vl * t;
+    vec4 c = uProj * vec4(q, 1.0);
+    vec2 uv = c.xy / c.w * 0.5 + 0.5;
+    if(uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) break;
+    float sd = texture(uGBuf, uv).w;
+    float dq = -q.z;
+    if(sd > 0.0 && dq > sd + 0.015 && dq < sd + 0.25) return 1.0 - smoothstep(0.0, 1.0, 1.0 - float(i) / 10.0) * 0.85;
+  }
+  return 1.0;
 }
 
 vec3 skyAt(vec3 d){
@@ -370,17 +494,21 @@ void main(){
   if(uHasTex){ vec4 tx = texture(uTex, vUV); if(tx.a < uAlphaTest) discard; s.albedo *= tx.rgb; alpha *= tx.a; }
   if(uPattern>0) s = pattern(s);
   if(uUnlit || uAdditive){
-    vec3 c = s.albedo + uEmissive;
+    vec3 c0 = s.albedo + uEmissive;
     if(uAdditive) alpha *= pow(abs(dot(N,V)), 1.5);
-    float dist0 = length(uCamPos - vWorld);
-    float fog0 = clamp(1.0 - exp(-pow(dist0*uFogDensity, 1.4)), 0.0, 1.0);
-    outColor = vec4(uAdditive ? c*(1.0-fog0) : mix(c, uFogColor, fog0), alpha); return;
+    float fog0 = clamp(1.0 - exp(-pow(length(uCamPos - vWorld)*uFogDensity, 1.4)), 0.0, 1.0);
+    outColor = vec4(uAdditive ? c0*(1.0-fog0) : mix(c0, uFogColor, fog0), alpha); return;
   }
-  if(uWet > 0.0){
-    float wet = uWet * smoothstep(0.55, 0.95, N.y) * (0.55 + 0.45*fbm(vWorld*0.6));
-    s.albedo *= 1.0 - 0.45*wet; s.rough = mix(s.rough, 0.06, wet);
+  float pud = 0.0;
+  if(uWetness > 0.0 && uShading != 1){ // rain: porous surfaces darken, everything turns glossy, puddles mirror
+    float damp = uWetness * (0.5 + 0.5*smoothstep(-0.3, 0.7, N.y));
+    pud = puddleMask(vWorld, N);
+    s.albedo *= mix(1.0, 0.6, damp * (1.0 - s.metal) * 0.8);
+    s.rough = mix(s.rough, s.rough * 0.45, damp);
+    s.rough = mix(s.rough, 0.02, pud); s.albedo *= 1.0 - 0.3*pud; s.bump *= 1.0 - pud;
   }
   if(s.bump>0.0 && uBump>0.0) N = perturb(N, vWorld, s.h, s.bump*uBump*0.02);
+  if(pud > 0.0 && uRain > 0.0){ vec2 rp = rainRipples(vWorld.xz * 2.6, uTime); N = normalize(N + vec3(rp.x, 0.0, rp.y) * 0.35 * uRain * pud); }
   float NoV = max(dot(N,V), 1e-4);
 
   if(uShading==1){ // studio "solid" mode
@@ -392,8 +520,8 @@ void main(){
     outColor = vec4(c + spec, uOpacity); return;
   }
 
-  float shMap = shadowFactor(N);
-  float sh = uShadowLight >= 0 ? 1.0 : shMap;
+  float sh = shadowFactor(N);
+  if(sh > 0.0 && dot(N, uSunDir) > 0.0) sh *= contactShadow(vWorld, normalize(vNormal));
   vec3 L = uSunDir;
   vec3 H = normalize(L+V);
   float NoL = max(dot(N,L),0.0), NoH = max(dot(N,H),0.0), VoH = max(dot(V,H),0.0);
@@ -416,9 +544,29 @@ void main(){
     spec = vec3(smoothstep(0.5,0.52,D*0.02))*(1.0-s.rough);
   }
   vec3 color = (diffuse*wrapL + spec*NoL) * uSunColor * sh;
+  // local point / spot lights (GGX specular + Lambert, smooth windowed falloff)
+  for(int i = 0; i < MAX_LIGHTS; i++){
+    if(i >= uLightCount) break;
+    vec3 Lv = uLightPos[i].xyz - vWorld;
+    float d2 = dot(Lv, Lv), r = uLightPos[i].w;
+    if(d2 > r*r) continue;
+    vec3 Ll = Lv * inversesqrt(max(d2, 1e-6));
+    float win = clamp(1.0 - pow(d2/(r*r), 2.0), 0.0, 1.0);
+    float att = win*win / (d2 + 1.0);
+    if(uLightColor[i].w > 0.5){ float cd = dot(-Ll, uLightSpot[i].xyz); att *= smoothstep(uLightSpot[i].w, mix(uLightSpot[i].w, 1.0, 0.35), cd); }
+    float nl = max(dot(N, Ll), 0.0);
+    if(nl <= 0.0 || att <= 0.0) continue;
+    vec3 Hl = normalize(Ll + V);
+    float nh = max(dot(N, Hl), 0.0);
+    float Dl = a2 / (PI * pow(nh*nh*(a2-1.0)+1.0, 2.0));
+    vec3 Fl = F0 + (1.0-F0)*pow(1.0-max(dot(V,Hl),0.0), 5.0);
+    color += (kd*s.albedo/PI + Dl*Fl*0.25*G) * uLightColor[i].rgb * att * nl;
+  }
   // hemisphere ambient + ambient specular from the procedural sky
   vec3 hemi = mix(uGroundColor, uSkyColor, N.y*0.5+0.5);
-  float ao = 0.55 + 0.45*clamp(N.y*0.5+0.6, 0.0, 1.0);
+  float ssao = uUseAO ? mix(1.0, texture(uAO, gl_FragCoord.xy / uScreen).r, uAOStrength) : 1.0;
+  float ao = (0.55 + 0.45*clamp(N.y*0.5+0.6, 0.0, 1.0)) * ssao * s.ao;
+  color *= mix(1.0, ssao, 0.35);
   color += kd*s.albedo*hemi*uAmbient*ao;
   vec3 R = reflect(-V, N);
   vec3 env = mix(skyAt(R), hemi, s.rough);
@@ -428,32 +576,17 @@ void main(){
   color += kd*s.albedo*max(dot(N,Lf),0.0)*vec3(0.25,0.3,0.4)*0.35;
   float rim = pow(1.0-NoV, 4.0);
   color += (uSheen*s.albedo + vec3(0.06))*rim*uSunColor*0.35*(0.4+0.6*sh);
-  // dynamic point / spot lights (GGX, windowed inverse-square falloff)
-  for(int i=0;i<MAX_LIGHTS;i++){
-    if(i>=uNumLights) break;
-    vec3 Lv = uLightPos[i].xyz - vWorld; float d = length(Lv); float range = uLightPos[i].w;
-    if(d > range) continue;
-    vec3 Li = Lv / max(d, 1e-4);
-    float win = clamp(1.0 - pow(d/range, 4.0), 0.0, 1.0);
-    float att = win*win / (d*d + 0.35);
-    if(uLightColor[i].w > -1.5) att *= smoothstep(uLightColor[i].w, uLightDir[i].w, dot(-Li, uLightDir[i].xyz));
-    if(i == uShadowLight) att *= shMap;
-    if(att <= 0.0) continue;
-    vec3 Hi = normalize(Li+V);
-    float nl = max(dot(N,Li),0.0), nh = max(dot(N,Hi),0.0), vh = max(dot(V,Hi),0.0);
-    float Di = a2 / (PI * pow(nh*nh*(a2-1.0)+1.0, 2.0));
-    float Gi = (nl/(nl*(1.0-k)+k)) * (NoV/(NoV*(1.0-k)+k));
-    vec3 Fi = F0 + (1.0-F0)*pow(1.0-vh, 5.0);
-    vec3 spi = Di*Gi*Fi / max(4.0*nl*NoV, 1e-4);
-    vec3 kdi = (1.0-Fi)*(1.0-s.metal);
-    float wl = nl;
-    if(uPattern==6) wl = max((dot(N,Li)+0.45)/1.45, 0.0);
-    color += (kdi*s.albedo/PI*wl + spi*nl) * uLightColor[i].rgb * att;
-  }
   color += uEmissive;
   // fog
   float dist = length(uCamPos - vWorld);
-  float fog = 1.0 - exp(-pow(dist*uFogDensity, 1.4));
+  float fogAmt = dist*uFogDensity;
+  if(uFogHeight > 0.0){ // denser near the ground, thinning with height
+    float h0 = max(uCamPos.y, 0.0), h1 = max(vWorld.y, 0.0);
+    float dh = h1 - h0;
+    float integ = abs(dh) < 1e-3 ? exp(-uFogHeight*h0) : (exp(-uFogHeight*h0) - exp(-uFogHeight*h1)) / (uFogHeight*dh);
+    fogAmt *= 1.0 + 1.2*integ;
+  }
+  float fog = 1.0 - exp(-pow(fogAmt, 1.4));
   color = mix(color, uFogColor, clamp(fog,0.0,1.0));
   outColor = vec4(color, alpha);
 }`;
@@ -481,6 +614,7 @@ in vec2 vUV;
 uniform mat4 uInvViewProj;
 uniform vec3 uSunDir; uniform vec3 uSunColor; uniform vec3 uHorizon; uniform vec3 uZenith; uniform vec3 uGroundColor;
 uniform bool uClouds; uniform float uTime;
+uniform float uNight; uniform vec3 uMoonDir;
 uniform bool uMesas; uniform float uStorm; uniform float uFlash;
 uniform int uMode; // 0 procedural sky, 1 editor gradient
 uniform vec3 uTop; uniform vec3 uBottom;
@@ -502,7 +636,6 @@ void main(){
   float mesa = smoothstep(ridge+0.002, ridge-0.002, t) * step(-0.02, t);
   if(uMesas) c = mix(c, mix(uHorizon*0.62, vec3(0.45,0.3,0.25), 0.5), mesa*0.85);
   if(uStorm > 0.0){
-    // churning storm deck lit from within by lightning
     vec2 sp = d.xz/(max(t,0.0)+0.08)*0.6;
     float drift = uTime*0.035;
     float base = fbm(vec3(sp*0.8 + vec2(drift, drift*0.3), uTime*0.02));
@@ -512,16 +645,30 @@ void main(){
     vec3 lit = vec3(0.55,0.62,0.8) * (0.4 + 1.8*uFlash);
     vec3 cloud = mix(dark*1.3, dark*0.45, dens) + lit * pow(detail, 2.0) * (0.15 + uFlash*1.6) * smoothstep(-0.05, 0.3, t);
     c = mix(c, cloud, uStorm * smoothstep(-0.08, 0.06, t));
-    // distant tree line / facility silhouette
     float az2 = atan(d.z, d.x);
     float line = 0.012 + 0.018*fbm(vec3(az2*9.0, 1.0, 0.0)) + 0.02*step(0.72, fbm(vec3(az2*3.0, 5.0, 2.0)));
     c = mix(c, uGroundColor*0.35, smoothstep(line+0.002, line-0.002, t) * step(-0.05, t) * uStorm);
     outColor = vec4(c, 1.0); return;
   }
+  if(uNight > 0.0 && t > 0.0){
+    // stars: hashed directions, twinkling, fading toward the horizon
+    vec3 sd3 = floor(d * 380.0);
+    float st = hash13(sd3);
+    float star = smoothstep(0.9965, 1.0, st) * (0.6 + 0.4*sin(uTime*3.0 + st*80.0));
+    c += vec3(0.9, 0.95, 1.0) * star * 2.5 * uNight * smoothstep(0.0, 0.25, t);
+    // milky band
+    float band = fbm(d*6.0) * smoothstep(0.35, 0.0, abs(dot(d, normalize(vec3(0.3, 0.2, 1.0)))));
+    c += vec3(0.25, 0.28, 0.4) * band * 0.25 * uNight;
+    float md = max(dot(d, uMoonDir), 0.0);
+    float disc = smoothstep(0.99965, 0.99975, md);
+    float craters = 0.85 + 0.15*fbm(d*400.0);
+    c += vec3(0.95, 0.96, 1.0) * (disc * 3.0 * craters + pow(md, 60.0) * 0.25) * uNight;
+  }
   if(uClouds && t > 0.0){
     vec2 cp = d.xz/(t+0.15)*1.2 + vec2(uTime*0.01, 0.0);
     float cl = smoothstep(0.5, 0.85, fbm(vec3(cp, 0.0)*1.5));
     vec3 cc = mix(vec3(1.0,0.95,0.9), uSunColor, 0.3) * (0.9 + 0.3*pow(sd,4.0));
+    cc = mix(cc, vec3(0.08, 0.09, 0.13), uNight);
     c = mix(c, cc, cl*smoothstep(0.0,0.25,t)*0.8);
   }
   outColor = vec4(c, 1.0);
@@ -589,7 +736,10 @@ in vec2 vUV;
 uniform sampler2D uColor; uniform sampler2D uBloom;
 uniform float uExposure; uniform float uVignette; uniform float uGrain; uniform float uTime; uniform bool uTonemap; uniform float uBloomStrength;
 uniform vec2 uTexel; uniform bool uFXAA;
-uniform float uDamage; uniform float uBlink; uniform float uNVG; uniform float uWhite; uniform float uDesat; uniform float uAberration;
+uniform vec2 uSunUV; uniform float uGodRays; uniform vec3 uRayColor;
+uniform sampler2D uBloom2; uniform sampler2D uBloom3;
+uniform float uSaturation; uniform float uContrast; uniform vec3 uWhite; uniform float uSharpen; uniform float uAberration;
+uniform float uDamage; uniform float uBlink; uniform float uNVG; uniform float uFlashWhite; uniform float uDesat;
 out vec4 outColor;
 vec3 aces(vec3 x){ const float a=2.51,b=0.03,c=2.43,d=0.59,e=0.14; return clamp((x*(a*x+b))/(x*(c*x+d)+e),0.0,1.0); }
 float luma(vec3 c){ return dot(c, vec3(0.299,0.587,0.114)); }
@@ -610,37 +760,45 @@ vec3 fxaa(vec2 uv){
 }
 void main(){
   vec3 c = uFXAA ? fxaa(vUV) : texture(uColor, vUV).rgb;
-  if(uAberration > 0.0){
-    vec2 dir = (vUV-0.5)*uAberration*0.012;
-    c.r = texture(uColor, vUV+dir).r; c.b = texture(uColor, vUV-dir).b;
+  if(uAberration > 0.0){ // slight lens fringing toward the corners
+    vec2 off = (vUV - 0.5) * uAberration * 0.004;
+    c.r = texture(uColor, vUV + off).r; c.b = texture(uColor, vUV - off).b;
   }
-  c += texture(uBloom, vUV).rgb * uBloomStrength;
-  float exposure = uExposure * (1.0 + uNVG*5.0);
+  if(uSharpen > 0.0){ // contrast-adaptive sharpening
+    vec3 nb = texture(uColor, vUV + vec2(uTexel.x, 0.0)).rgb + texture(uColor, vUV - vec2(uTexel.x, 0.0)).rgb + texture(uColor, vUV + vec2(0.0, uTexel.y)).rgb + texture(uColor, vUV - vec2(0.0, uTexel.y)).rgb;
+    c = max(c + (c - nb * 0.25) * uSharpen / (1.0 + luma(c)), vec3(0.0));
+  }
+  c += (texture(uBloom, vUV).rgb + texture(uBloom2, vUV).rgb * 0.9 + texture(uBloom3, vUV).rgb * 0.8) * uBloomStrength;
+  if(uGodRays > 0.0){
+    // screen-space light scattering: march toward the sun through the bright (bloom) buffer
+    vec2 dir = (vUV - uSunUV) / 40.0;
+    vec2 uv = vUV; float decay = 1.0; vec3 acc = vec3(0.0);
+    for(int i = 0; i < 40; i++){ uv -= dir; acc += texture(uBloom, uv).rgb * decay; decay *= 0.955; }
+    c += acc / 40.0 * uGodRays * uRayColor;
+  }
   if(uTonemap){
-    c = aces(c*exposure);
+    c *= uWhite;
+    c = aces(c*uExposure*(1.0 + uNVG*5.0));
+    float l = luma(c);
+    c = mix(vec3(l), c, uSaturation);
+    c = clamp((c - 0.5) * uContrast + 0.5, 0.0, 1.0);
     c = pow(c, vec3(1.0/2.2));
   }
   vec2 q = vUV-0.5;
   if(uNVG > 0.0){
-    float l = dot(c, vec3(0.3,0.59,0.11));
+    float l0 = dot(c, vec3(0.3,0.59,0.11));
     float n0 = fract(sin(dot(floor(vUV/uTexel*0.5)+uTime*60.0, vec2(12.9898,78.233)))*43758.5453);
-    l = l*1.1 + (n0-0.5)*0.12;
-    float scan = 0.94 + 0.06*sin(vUV.y/uTexel.y*1.5);
-    vec3 g = vec3(0.25,1.0,0.35)*l*scan;
+    l0 = l0*1.1 + (n0-0.5)*0.12;
     vec2 qa = vec2(q.x*uTexel.y/uTexel.x, q.y);
-    float tube = 0.08 + 0.92*smoothstep(0.66, 0.5, length(qa));
-    c = mix(c, g * tube, uNVG);
+    vec3 g = vec3(0.25,1.0,0.35)*l0*(0.94 + 0.06*sin(vUV.y/uTexel.y*1.5));
+    c = mix(c, g*(0.08 + 0.92*smoothstep(0.66, 0.5, length(qa))), uNVG);
   }
   float l2 = dot(c, vec3(0.3,0.59,0.11));
   c = mix(c, vec3(l2), clamp(uDesat, 0.0, 1.0));
   c *= 1.0 - dot(q,q)*uVignette;
-  // damage: red pulsing edges
-  float edge = smoothstep(0.12, 0.75, length(q*vec2(1.3,1.0)));
-  c = mix(c, vec3(0.45,0.0,0.0), edge*uDamage*0.85);
-  c = mix(c, vec3(1.0), clamp(uWhite, 0.0, 1.0));
-  // blink: eyelids close from top and bottom
-  float lid = abs(q.y)*2.0;
-  if(uBlink > 0.0){ float open = 1.0 - uBlink; c *= 1.0 - smoothstep(open - 0.07, open, lid); }
+  c = mix(c, vec3(0.45,0.0,0.0), smoothstep(0.12, 0.75, length(q*vec2(1.3,1.0)))*uDamage*0.85);
+  c = mix(c, vec3(1.0), clamp(uFlashWhite, 0.0, 1.0));
+  if(uBlink > 0.0){ float open = 1.0 - uBlink; c *= 1.0 - smoothstep(open - 0.07, open, abs(q.y)*2.0); }
   float n = fract(sin(dot(vUV*1000.0+uTime, vec2(12.9898,78.233)))*43758.5453);
   c += (n-0.5)*uGrain;
   outColor = vec4(c, 1.0);
@@ -657,6 +815,9 @@ void main(){
     c /= 9.0;
     float l = max(c.r, max(c.g, c.b));
     outColor = vec4(c * max(l-uThreshold,0.0)/max(l,1e-4), 1.0);
+  } else if(uPass==2){ // plain 4-tap downsample for the wider bloom levels
+    vec3 c = texture(uColor, vUV + uTexel*vec2(-0.5,-0.5)).rgb + texture(uColor, vUV + uTexel*vec2(0.5,-0.5)).rgb + texture(uColor, vUV + uTexel*vec2(-0.5,0.5)).rgb + texture(uColor, vUV + uTexel*vec2(0.5,0.5)).rgb;
+    outColor = vec4(c*0.25, 1.0);
   } else {
     // separable 9-tap gaussian; uTexel carries the direction
     vec3 c = texture(uColor, vUV).rgb*0.227;
@@ -664,4 +825,208 @@ void main(){
     c += (texture(uColor, vUV+uTexel*3.231).rgb + texture(uColor, vUV-uTexel*3.231).rgb)*0.070;
     outColor = vec4(c,1.0);
   }
+}`;
+
+export const GBUF_FS = /* glsl */ `#version 300 es
+precision highp float;
+in vec3 vWorld; in vec3 vNormal; in vec2 vUV; in vec3 vRest; in vec3 vRestN; in vec4 vShadow;
+uniform mat4 uView; uniform bool uDoubleSided;
+uniform float uRoughness; uniform float uMetallic; uniform int uPattern; uniform float uTime;
+layout(location=0) out vec4 outG;   // view-space normal, linear depth
+layout(location=1) out vec4 outM;   // roughness, metallic, puddle, 1
+${NOISE}
+${WET}
+void main(){
+  vec3 n = normalize(vNormal);
+  if(uDoubleSided && !gl_FrontFacing) n = -n;
+  float rough = uRoughness, metal = uMetallic;
+  if(uPattern == 19){ rough = 0.05; metal = 0.4; } // window glass
+  float pud = 0.0;
+  if(uWetness > 0.0){ float damp = uWetness * (0.5 + 0.5*smoothstep(-0.3, 0.7, n.y)); pud = puddleMask(vWorld, n); rough = mix(mix(rough, rough*0.45, damp), 0.02, pud); }
+  vec3 vn = normalize(mat3(uView) * n);
+  float d = -(uView * vec4(vWorld, 1.0)).z;
+  outG = vec4(vn, d);
+  outM = vec4(rough, metal, pud, 1.0);
+}`;
+
+export const SSAO_FS = /* glsl */ `#version 300 es
+precision highp float;
+in vec2 vUV;
+uniform sampler2D uG; uniform mat4 uProj; uniform vec2 uTan; uniform float uRadius; uniform float uIntensity;
+uniform vec3 uKernel[16];
+out vec4 outColor;
+float h12(vec2 p){ vec3 p3 = fract(vec3(p.xyx)*0.1031); p3 += dot(p3, p3.yzx+33.33); return fract((p3.x+p3.y)*p3.z); }
+vec3 viewPos(vec2 uv, float d){ vec2 ndc = uv*2.0-1.0; return vec3(ndc.x*uTan.x*d, ndc.y*uTan.y*d, -d); }
+void main(){
+  vec4 g = texture(uG, vUV);
+  if(g.w <= 0.0){ outColor = vec4(1.0); return; }
+  vec3 p = viewPos(vUV, g.w), n = normalize(g.xyz);
+  float a = h12(gl_FragCoord.xy) * 6.2831;
+  vec3 rv = vec3(cos(a), sin(a), 0.0);
+  vec3 t = normalize(rv - n*dot(rv, n)), b = cross(n, t);
+  mat3 TBN = mat3(t, b, n);
+  float occ = 0.0;
+  for(int i = 0; i < 16; i++){
+    vec3 sp = p + TBN * uKernel[i] * uRadius;
+    vec4 c = uProj * vec4(sp, 1.0);
+    vec2 uv = c.xy / c.w * 0.5 + 0.5;
+    if(uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) continue;
+    float sd = texture(uG, uv).w;
+    if(sd <= 0.0) continue;
+    float range = smoothstep(0.0, 1.0, uRadius / abs(g.w - sd));
+    occ += (sd < -sp.z - 0.02 ? 1.0 : 0.0) * range;
+  }
+  outColor = vec4(vec3(clamp(1.0 - occ / 16.0 * uIntensity, 0.0, 1.0)), 1.0);
+}`;
+
+export const AOBLUR_FS = /* glsl */ `#version 300 es
+precision highp float;
+in vec2 vUV; uniform sampler2D uAO; uniform sampler2D uG; uniform vec2 uTexel;
+out vec4 outColor;
+void main(){
+  float d0 = texture(uG, vUV).w, sum = 0.0, wsum = 0.0;
+  for(int y = -2; y <= 2; y++) for(int x = -2; x <= 2; x++){
+    vec2 uv = vUV + vec2(x, y) * uTexel;
+    float d = texture(uG, uv).w;
+    float w = 1.0 / (1.0 + abs(d - d0) * 8.0);
+    sum += texture(uAO, uv).r * w; wsum += w;
+  }
+  outColor = vec4(vec3(sum / max(wsum, 1e-4)), 1.0);
+}`;
+
+
+// V3 screen-space reflections (half resolution): march the reflected view ray through the
+// depth buffer, refine the hit with a binary search and fetch the lit colour there.
+export const SSR_FS = /* glsl */ `#version 300 es
+precision highp float;
+in vec2 vUV;
+uniform sampler2D uG; uniform sampler2D uM; uniform sampler2D uColor;
+uniform mat4 uProj; uniform vec2 uTan; uniform float uMaxRough; uniform float uTime;
+out vec4 outColor;
+float h12(vec2 p){ vec3 p3 = fract(vec3(p.xyx)*0.1031); p3 += dot(p3, p3.yzx+33.33); return fract((p3.x+p3.y)*p3.z); }
+vec3 viewPos(vec2 uv, float d){ vec2 ndc = uv*2.0-1.0; return vec3(ndc.x*uTan.x*d, ndc.y*uTan.y*d, -d); }
+vec2 project(vec3 q){ vec4 c = uProj * vec4(q, 1.0); return c.xy / c.w * 0.5 + 0.5; }
+void main(){
+  vec4 g = texture(uG, vUV); vec4 m = texture(uM, vUV);
+  if(g.w <= 0.0 || m.r > uMaxRough){ outColor = vec4(0.0); return; }
+  vec3 p = viewPos(vUV, g.w), n = normalize(g.xyz), v = normalize(p);
+  vec3 r = normalize(reflect(v, n));
+  float stepLen = 0.08 + 0.02 * g.w * 0.1, t = stepLen * (0.5 + h12(gl_FragCoord.xy + fract(uTime) * 61.0));
+  vec2 hit = vec2(-1.0); float travelled = 0.0;
+  for(int i = 0; i < 48; i++){
+    vec3 q = p + r * t;
+    if(q.z > -0.05) break;
+    vec2 uv = project(q);
+    if(uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) break;
+    float sd = texture(uG, uv).w, qd = -q.z;
+    if(sd > 0.0 && qd > sd + 0.02 && qd < sd + max(0.35, stepLen * 2.0)){
+      float a = t - stepLen, b = t;
+      for(int k = 0; k < 6; k++){ float mid = (a + b) * 0.5; vec3 qm = p + r * mid; float smd = texture(uG, project(qm)).w; if(-qm.z > smd) b = mid; else a = mid; }
+      hit = project(p + r * b); travelled = b; break;
+    }
+    stepLen *= 1.09; t += stepLen;
+  }
+  if(hit.x < 0.0){ outColor = vec4(0.0); return; }
+  vec3 col = texture(uColor, hit).rgb;
+  float edge = smoothstep(0.0, 0.07, min(min(hit.x, 1.0 - hit.x), min(hit.y, 1.0 - hit.y)));
+  float conf = edge * (1.0 - smoothstep(uMaxRough * 0.5, uMaxRough, m.r)) * (1.0 - smoothstep(0.35, 0.85, r.z)) * (1.0 - smoothstep(25.0, 45.0, travelled));
+  outColor = vec4(min(col, vec3(40.0)), conf);
+}`;
+
+// V3 volumetric lighting (half resolution): raymarch the camera ray through height fog,
+// adding sun light where the shadow map says it's lit and light from nearby lamps and spots.
+export const VOLUME_FS = /* glsl */ `#version 300 es
+precision highp float;
+precision highp sampler2DShadow;
+in vec2 vUV;
+uniform sampler2D uG; uniform sampler2DShadow uShadowMap; uniform bool uShadows;
+uniform mat4 uInvView; uniform mat4 uShadowVP; uniform vec2 uTan; uniform vec3 uCamPos;
+uniform vec3 uSunDir; uniform vec3 uSunColor; uniform float uDensity; uniform float uFogHeight; uniform float uSunScatter; uniform float uLightScatter;
+uniform float uMaxDist; uniform float uTime; uniform float uAniso;
+#define MAX_LIGHTS 16
+uniform int uLightCount; uniform vec4 uLightPos[MAX_LIGHTS]; uniform vec4 uLightColor[MAX_LIGHTS]; uniform vec4 uLightSpot[MAX_LIGHTS];
+out vec4 outColor;
+float h12(vec2 p){ vec3 p3 = fract(vec3(p.xyx)*0.1031); p3 += dot(p3, p3.yzx+33.33); return fract((p3.x+p3.y)*p3.z); }
+float hg(float c, float g){ float g2 = g*g; return (1.0 - g2) / (12.566 * pow(1.0 + g2 - 2.0*g*c, 1.5)); }
+void main(){
+  float d = texture(uG, vUV).w;
+  vec3 vd = normalize(vec3((vUV*2.0-1.0)*uTan, -1.0));
+  float T = (d > 0.0 ? min(d, uMaxDist) : uMaxDist) / -vd.z;
+  vec3 dir = normalize(mat3(uInvView) * vd);
+  const int STEPS = 20;
+  float dt = T / float(STEPS), j = h12(gl_FragCoord.xy + fract(uTime)*97.0);
+  float cs = dot(dir, uSunDir), sunPhase = hg(cs, uAniso) + 0.02;
+  vec3 acc = vec3(0.0); float trans = 1.0;
+  for(int i = 0; i < STEPS; i++){
+    float t = (float(i) + j) * dt;
+    vec3 p = uCamPos + dir * t;
+    float dens = uDensity * (uFogHeight > 0.0 ? exp(-max(p.y, 0.0) * uFogHeight) : 1.0);
+    vec3 L = vec3(0.0);
+    if(uSunScatter > 0.0){
+      float lit = 1.0;
+      if(uShadows){ vec4 sp = uShadowVP * vec4(p, 1.0); vec3 sc = sp.xyz / sp.w * 0.5 + 0.5; if(sc.x > 0.0 && sc.x < 1.0 && sc.y > 0.0 && sc.y < 1.0 && sc.z < 1.0) lit = texture(uShadowMap, vec3(sc.xy, sc.z - 0.002)); }
+      L += uSunColor * lit * sunPhase * uSunScatter;
+    }
+    for(int k = 0; k < MAX_LIGHTS; k++){
+      if(k >= uLightCount) break;
+      vec3 Lv = uLightPos[k].xyz - p; float d2 = dot(Lv, Lv), r = uLightPos[k].w;
+      if(d2 > r*r) continue;
+      float win = clamp(1.0 - pow(d2/(r*r), 2.0), 0.0, 1.0), att = win*win / (d2 + 0.3);
+      if(uLightColor[k].w > 0.5){ float cd = dot(-Lv * inversesqrt(max(d2,1e-6)), uLightSpot[k].xyz); att *= smoothstep(uLightSpot[k].w, mix(uLightSpot[k].w, 1.0, 0.25), cd) * 3.0; }
+      L += uLightColor[k].rgb * att * uLightScatter * 0.08;
+    }
+    acc += L * dens * trans * dt;
+    trans *= exp(-dens * dt);
+  }
+  outColor = vec4(acc, trans);
+}`;
+
+// Depth-aware 5x5 blur for half-resolution effect buffers (SSR, volumetrics)
+export const BILATERAL_FS = /* glsl */ `#version 300 es
+precision highp float;
+in vec2 vUV; uniform sampler2D uSrc; uniform sampler2D uG; uniform vec2 uTexel; uniform float uScale;
+out vec4 outColor;
+void main(){
+  float d0 = texture(uG, vUV).w; vec4 sum = vec4(0.0); float wsum = 0.0;
+  for(int y = -2; y <= 2; y++) for(int x = -2; x <= 2; x++){
+    vec2 uv = vUV + vec2(x, y) * uTexel * uScale;
+    float d = texture(uG, uv).w;
+    float w = exp(-float(x*x + y*y) * 0.18) / (1.0 + abs(d - d0) * 6.0);
+    sum += texture(uSrc, uv) * w; wsum += w;
+  }
+  outColor = sum / max(wsum, 1e-4);
+}`;
+
+// Combine the lit frame with reflections and volumetric light (still HDR).
+export const COMPOSITE_FS = /* glsl */ `#version 300 es
+precision highp float;
+in vec2 vUV;
+uniform sampler2D uColor; uniform sampler2D uSSR; uniform sampler2D uVol; uniform sampler2D uG; uniform sampler2D uM;
+uniform bool uUseSSR; uniform bool uUseVol; uniform float uSSRStrength;
+uniform mat4 uInvView; uniform vec2 uTan;
+uniform vec3 uHorizon; uniform vec3 uZenith; uniform vec3 uGroundColor; uniform float uAmbient;
+out vec4 outColor;
+vec3 skyAt(vec3 d){
+  float t = clamp(d.y*0.5+0.5, 0.0, 1.0);
+  vec3 c = mix(uGroundColor*0.9, uHorizon, smoothstep(0.35, 0.5, t));
+  return mix(c, uZenith, smoothstep(0.5, 0.95, t));
+}
+void main(){
+  vec3 c = texture(uColor, vUV).rgb;
+  if(uUseSSR){
+    vec4 r = texture(uSSR, vUV);
+    if(r.a > 0.001){
+      vec4 g = texture(uG, vUV), m = texture(uM, vUV);
+      vec3 v = normalize(vec3((vUV*2.0-1.0)*uTan, -1.0)), n = normalize(g.xyz);
+      float NoV = clamp(dot(n, -v), 0.0, 1.0);
+      float F0 = mix(0.04, 0.75, m.g), F = F0 + (1.0 - F0) * pow(1.0 - NoV, 5.0);
+      F *= 1.0 - m.r * 0.8;
+      vec3 R = mat3(uInvView) * reflect(v, n);
+      // swap the sky reflection the lit pass assumed for what the ray actually hit
+      vec3 add = (r.rgb - skyAt(R) * uAmbient * 0.8) * F * r.a * uSSRStrength;
+      c = max(c + add, c * 0.25);
+    }
+  }
+  if(uUseVol) c += texture(uVol, vUV).rgb;
+  outColor = vec4(c, 1.0);
 }`;

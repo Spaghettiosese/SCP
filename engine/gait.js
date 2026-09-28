@@ -65,6 +65,8 @@ function overlayApi(sk, R) {
   };
 }
 
+const DEG2 = Math.PI / 180;
+
 class Rig {
   constructor(sk) {
     this.sk = sk;
@@ -123,8 +125,10 @@ export function synthesizeLocomotion(sk, o) {
     heelStrike: -16, toeOff: 38, flatStart: 0.14, heelOff: 0.52, swingPitchMid: 8,
     kick: [0, 0.07, -0.02], drive: [0, 0.06, 0.08], armSwing: 18, armAbduct: 6, armBias: 2, elbow: 14, elbowSwing: 14,
     headPitch: 0, handFlex: -8, spineLean: 1, chestLean: 1, syncGroup: 'locomotion', strikeLift: 0.0, hands: 'relaxed', fingerSwing: 0.07,
+    heading: 0, // travel direction in degrees: 0 forward, 180 backward, 90 strafe left (+X), -90 strafe right
     ...o,
   };
+  const hs = Math.sin(p.heading * DEG2), hc = Math.cos(p.heading * DEG2);
   const R = new Rig(sk), T = p.duration, S = p.speed * p.stance * T;
   const zStrike = p.center + S / 2, zOff = p.center - S / 2;
   // Foot plan in character space for a limb phase ph -> ankle pos + foot pitch + toe local pitch
@@ -168,10 +172,12 @@ export function synthesizeLocomotion(sk, o) {
     for (const side of ['L', 'R']) {
       const sg = side === 'L' ? 1 : -1, ph = fract(phi + (side === 'R' ? 0.5 : 0));
       const f = foot(ph);
-      const target = [sg * p.stepWidth, f.ankle[1], f.ankle[2]];
+      // sideways: the foot on the travel side leads and the other follows, so legs never cross
+      const along = f.ankle[2] + (hs ? sg * Math.sign(hs) * (S / 2 + 0.02) * Math.abs(hs) * 0.9 : 0);
+      const target = [sg * p.stepWidth + hs * along, f.ankle[1], hc * along];
       twoBoneIK(sk, R.i['thigh.' + side], R.i['shin.' + side], R.i['foot.' + side], target, [sg * 0.12, 0, 1]);
-      setWorldRotation(sk, R.i['foot.' + side], E(f.pitch, 0, 0));
-      setWorldRotation(sk, R.i['toe.' + side], E(f.pitch + f.toe, 0, 0));
+      setWorldRotation(sk, R.i['foot.' + side], E(f.pitch * hc, 0, -f.pitch * hs * 0.35));
+      setWorldRotation(sk, R.i['toe.' + side], E((f.pitch + f.toe) * hc, 0, 0));
       // arms swing opposite to the same-side leg
       const armPh = Math.cos(TAU * ph);
       R.set('upperArm', [p.armBias + p.armSwing * armPh, 0, p.armAbduct], side);
@@ -190,7 +196,7 @@ export function synthesizeLocomotion(sk, o) {
     samples.push(sk.snapshotPose());
   }
   const record = sk.bones.map((b, i) => i).filter((i) => !sk.bones[i].spring && sk.bones[i].name !== 'root');
-  const clip = bake(sk, p.name, T, samples, record, { rootMotion: [0, 0, p.speed], syncGroup: p.syncGroup, events: [{ t: 0, name: 'footstep', side: 'L' }, { t: T / 2, name: 'footstep', side: 'R' }] });
+  const clip = bake(sk, p.name, T, samples, record, { rootMotion: [hs * p.speed, 0, hc * p.speed], syncGroup: p.syncGroup, events: [{ t: 0, name: 'footstep', side: 'L' }, { t: T / 2, name: 'footstep', side: 'R' }] });
   sk.resetPose(); sk.update();
   return clip;
 }

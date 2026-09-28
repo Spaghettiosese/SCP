@@ -406,7 +406,7 @@ export class SCP173 {
     if (g.player.nvg && who === g.player) return true;
     if (g.areaLightsOn()) return true;
     const c = this.center();
-    for (const l of g.scene.environment.lights) {
+    for (const l of g.scene.environment.dynLights) {
       if (!l.intensity || l.intensity < 3) continue;
       const d = Math.hypot(l.position[0] - c[0], l.position[1] - c[1], l.position[2] - c[2]);
       if (d > l.range * 0.8) continue;

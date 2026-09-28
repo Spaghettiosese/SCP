@@ -45,7 +45,7 @@ export class Director {
     g.audio.heliLoop(); g.audio.setLoop('heli', 0.9, 1); g.audio.rainLoop(); g.audio.setLoop('rain', 0.55); g.audio.windLoop(); g.audio.setLoop('wind', 0.4);
     g.audio.alarmLoop(); g.audio.setLoop('alarm', 0.05);
     this.heliLight = { position: [0, 0, 0], color: [0.9, 0.95, 1], intensity: 500, range: 60, spot: { direction: [0, -1, 0.3], angle: 0.35, inner: 0.2 }, priority: true };
-    g.scene.environment.lights.push(this.heliLight);
+    g.scene.environment.dynLights.push(this.heliLight);
     g.hud.banner('SITE-80', '03:47 LOCAL · CONTAINMENT BREACH · MTF EPSILON-11 "NINE-TAILED FOX"', 6);
     document.body.classList.add('cinematic');
     this.say([
@@ -136,7 +136,7 @@ export class Director {
     const g = this.g, L = g.level;
     this.stage = 'a1'; this.checkpoint = cp; this.events = []; this.t = 0;
     g.setArea(1);
-    if (this.heliLight && !g.scene.environment.lights.includes(this.heliLight) && this.heli && this.heli.parent) g.scene.environment.lights.push(this.heliLight);
+    if (this.heliLight && !g.scene.environment.dynLights.includes(this.heliLight) && this.heli && this.heli.parent) g.scene.environment.dynLights.push(this.heliLight);
     g.searchTarget = null;
     L.doors.blast.target = 0; L.doors.blast.open = cp === 'a1door' ? 0.35 : 0;
     L.interact.forEach((i) => (i.enabled = false));
@@ -198,7 +198,7 @@ export class Director {
       H.updateWorld();
       this.heliLight.position = vec3.transformMat4([0, 0, 0], [0, 0.1, 2.9], H.world);
       g.audio.setLoop('heli', Math.max(0, 0.9 - k * 0.07), 0.3);
-      if (k > 14) { g.scene.remove(H); this.heliLeaving = -1; g.scene.environment.lights = g.scene.environment.lights.filter((l) => l !== this.heliLight); }
+      if (k > 14) { g.scene.remove(H); this.heliLeaving = -1; g.scene.environment.dynLights = g.scene.environment.dynLights.filter((l) => l !== this.heliLight); }
     }
     const hostiles = () => g.actors.filter((a) => a.team === 'dclass' && a.alive && !a.surrendered && a.area === 1);
     if (this.phase === 'approach') {
@@ -457,6 +457,7 @@ export class Director {
   restart() {
     const g = this.g;
     g.fade = undefined; this.fade = null;
+    g.cameraRoll = 0; g.player.pitch = 0; g.player.shake = 0; g.player.kick = [0, 0]; g.player.kickV = [0, 0];
     if (this.s173) { g.scene.remove(this.s173.node); g.actors = g.actors.filter((a) => a !== this.s173); this.s173 = null; g.scp173 = null; }
     const cp = this.checkpoint;
     g.player.alive = true; g.player.hp = 100; g.player.blinkEnabled = false;

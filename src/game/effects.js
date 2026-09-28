@@ -69,7 +69,7 @@ export class Effects {
     this.smoke.emit(p, { count: suppressed ? 2 : 4, dir, speed: 1.2, spread: 0.3, life: 1.2, size: 0.06 * big, grow: 6, color: [0.55, 0.55, 0.55, 0.22], gravity: 0.4, drag: 2.5 });
     this.flash(p, suppressed ? 2 : 14 * big, [1, 0.72, 0.4], 0.05, 8);
   }
-  flash(p, intensity, color, dur, range = 8) { const l = { position: [...p], color, intensity, range, t: dur, dur, base: intensity, priority: true }; this.env.lights.push(l); this.lights.push(l); return l; }
+  flash(p, intensity, color, dur, range = 8) { const l = { position: [...p], color, intensity, range, t: dur, dur, base: intensity, priority: true }; this.env.dynLights.push(l); this.lights.push(l); return l; }
   impact(p, n, material = 'concrete') {
     if (material === 'flesh') { this.blood(p, n); return; }
     const sparks = material === 'metal';
@@ -134,7 +134,7 @@ export class Effects {
     // transient lights
     for (const l of this.lights) { l.t -= dt; l.intensity = Math.max(0, l.base * (l.t / l.dur)); }
     const dead = this.lights.filter((l) => l.t <= 0);
-    if (dead.length) { this.lights = this.lights.filter((l) => l.t > 0); this.env.lights = this.env.lights.filter((l) => !dead.includes(l)); }
+    if (dead.length) { this.lights = this.lights.filter((l) => l.t > 0); this.env.dynLights = this.env.dynLights.filter((l) => !dead.includes(l)); }
     // brass physics
     for (const m of this.brass) {
       if (!m.visible) continue;

@@ -3,8 +3,8 @@ import { vec3, quat, mat4, DEG, hexToRGB } from './math.js';
 
 let NEXT_ID = 1;
 
-export const PATTERNS = ['none', 'fabric', 'denim', 'leather', 'metal', 'wood', 'skin', 'plaid', 'stripes', 'checker', 'dirt', 'felt', 'hair', 'eye', 'walnut',
-  // SCP game additions (world-space triplanar)
+export const PATTERNS = ['none', 'fabric', 'denim', 'leather', 'metal', 'wood', 'skin', 'plaid', 'stripes', 'checker', 'dirt', 'felt', 'hair', 'eye', 'walnut', 'planks', 'brick', 'shingles', 'stucco', 'glass', 'corrugated',
+  // SCP game additions (21..29)
   'concrete', 'tile', 'hazard', 'panel', 'rust', 'grate', 'rubber', 'asphalt', 'camo'];
 
 export class Material {
@@ -23,11 +23,9 @@ export class Material {
     this.sheen = o.sheen ?? 0; // cloth rim
     this.doubleSided = o.doubleSided ?? false;
     this.opacity = o.opacity ?? 1;
-    this.blend = o.blend || 'normal'; // 'normal' | 'add' (glows, flashes, beams)
-    this.texture = o.texture || null; // optional canvas/image multiplied into the albedo (uses mesh UVs)
-    this.alphaTest = o.alphaTest ?? 0; // discard texels below this alpha (decals, cutouts)
-    this.unlit = o.unlit ?? false;
-    this.worldPattern = o.worldPattern ?? false; // pattern evaluated in world space instead of rest space
+    this.blend = o.blend || 'normal'; // 'normal' | 'add'
+    this.texture = o.texture || null; this.alphaTest = o.alphaTest ?? 0;
+    this.unlit = o.unlit ?? false; this.worldPattern = o.worldPattern ?? false;
   }
   get patternIndex() { return Math.max(0, PATTERNS.indexOf(this.pattern)); }
   rgb(key) { return hexToRGB(this[key]); }
@@ -55,7 +53,7 @@ export class Node {
   getEuler(out = [0, 0, 0]) { return quat.toEuler(out, this.rotation); }
   updateWorld(parentWorld = null) {
     mat4.fromRTS(this.local, this.rotation, this.position, this.scale);
-    if (this.worldOverride) this.world.set(this.worldOverride); // attached to a bone / camera by game code
+    if (this.worldOverride) this.world.set(this.worldOverride);
     else if (parentWorld) mat4.multiply(this.world, parentWorld, this.local); else this.world.set(this.local);
     for (const c of this.children) c.updateWorld(this.world);
   }
@@ -74,6 +72,37 @@ export class Mesh extends Node {
     this.skeleton = null; // when set, geometry is skinned: world = skinRoot.world * joints * local
     this.skinRoot = null; // node that owns the skeleton (character root)
     this.pickable = true;
+  }
+}
+
+// Local light. Point lights shine in all directions; spot lights shine down their node's
+// local -Y axis (so a lamp hanging from a bracket just works). Up to 16 are used per frame,
+// nearest to the camera first.
+export class Light extends Node {
+  constructor(type = 'point', { color = '#ffc07a', intensity = 6, range = 8, angle = 45, flicker = 0 } = {}) {
+    super(type === 'spot' ? 'Spot Light' : 'Point Light');
+    this.isLight = true;
+    this.type = type;
+    this.color = color; this.intensity = intensity; this.range = range; this.angle = angle;
+    this.flicker = flicker; // 0..1, animated by the renderer (lanterns, torches)
+    this.seed = Math.random() * 100;
+  }
+}
+
+// Many copies of one geometry in a single draw call. Set matrices with setMatrixAt().
+export class InstancedMesh extends Node {
+  constructor(geometry, material, count, name = 'Instanced') {
+    super(name);
+    this.geometry = geometry; this.material = material;
+    this.count = count; this.instanceMatrices = new Float32Array(count * 16);
+    for (let i = 0; i < count; i++) this.instanceMatrices.set(mat4.create(), i * 16);
+    this.castShadow = true; this.receiveShadow = true; this.pickable = false;
+    this.instanceVersion = 0;
+  }
+  setMatrixAt(i, m) { this.instanceMatrices.set(m, i * 16); this.instanceVersion++; }
+  setTransformAt(i, pos, eulerDeg = [0, 0, 0], scale = [1, 1, 1]) {
+    const q = quat.fromEuler(quat.create(), eulerDeg[0], eulerDeg[1], eulerDeg[2]);
+    this.setMatrixAt(i, mat4.fromRTS(mat4.create(), q, pos, scale));
   }
 }
 
@@ -121,9 +150,14 @@ export class Scene extends Node {
       fogColor: [0.86, 0.74, 0.62], fogDensity: 0.012,
       exposure: 1.0, sky: true, clouds: true,
       shadowCenter: [0, 1, 0], shadowRadius: 4,
-      mesas: true, storm: 0, flash: 0, // sky: desert mesas, storm clouds (0..1), lightning flash
-      lights: [], // [{ position, color, intensity, range, spot?: { direction, angle, inner }, shadow?: bool }]
-      shadowLight: null, // a spot light from `lights` that owns the shadow map instead of the sun
+      // V2
+      night: 0, moonDirection: [-0.4, 0.6, -0.5], fogHeight: 0,
+      ao: true, aoRadius: 0.5, aoIntensity: 1.4, aoStrength: 1, godRays: 0, rayColor: [1, 0.85, 0.6], lights: true,
+      // V3: volumetric light (0 = off), soft shadows (sun size in degrees), weather
+      volumetric: 0.5, volumeDensity: 0.03, sunShafts: 0.25, lampGlow: 1, anisotropy: 0.6, volumeDistance: 60,
+      shadowSoftness: 2.5, wetness: 0, rain: 0,
+      // SCP game: sky variants and plain-object dynamic lights
+      mesas: true, storm: 0, flash: 0, dynLights: [],
     };
   }
 }

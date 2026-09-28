@@ -135,6 +135,7 @@ export class Mixer {
     this.listeners = [];
     this.pose = createPose(skeleton.length);
     this._tmp = [];
+    this.layers = [];
     clips.forEach((c) => this.addClip(c));
   }
   addClip(c) { const clip = c instanceof Clip ? c : new Clip(c); this.clips.set(clip.name, clip); this.actions.set(clip.name, new Action(clip)); return clip; }
@@ -142,8 +143,13 @@ export class Mixer {
   on(fn) { this.listeners.push(fn); return () => (this.listeners = this.listeners.filter((f) => f !== fn)); }
   action(name) { return this.actions.get(name); }
   // Crossfade to one clip. Clips sharing a syncGroup keep their normalized phase.
+  _act(name) {
+    let a = this.actions.get(name);
+    if (!a && this.clips.has(name)) { a = new Action(this.clips.get(name)); this.actions.set(name, a); }
+    return a;
+  }
   play(name, { fade = 0.35, restart = false, speed } = {}) {
-    const a = this.actions.get(name);
+    const a = this._act(name);
     if (!a) return;
     const current = this.dominant();
     if (restart || (!a.weight && !(current && current.clip.syncGroup && current.clip.syncGroup === a.clip.syncGroup))) a.time = 0;
@@ -156,6 +162,7 @@ export class Mixer {
   // Blend-tree control, safe to call every frame: weights move toward their targets at a
   // steady rate (full swing in `fade` seconds) instead of restarting an eased fade.
   setWeights(map, fade = 0.2) {
+    for (const n of Object.keys(map)) this._act(n);
     for (const [n, b] of this.actions) {
       b.to = map[n] || 0; b.fadeT = 1; b.track = fade > 0 ? 1 / fade : Infinity;
       if (b.to > 0 && b.weight === 0 && !(b.clip.syncGroup && this.dominant()?.clip.syncGroup === b.clip.syncGroup)) b.time = 0;
@@ -173,6 +180,12 @@ export class Mixer {
   setTime(name, t) { const a = this.actions.get(name); if (a) a.time = t; }
 
   update(dt) {
+    this.advance(dt);
+    for (const l of this.layers) l.advance(dt);
+    return this.evaluate();
+  }
+  // Advance weights, clip times and events without touching the skeleton.
+  advance(dt) {
     dt *= this.timeScale;
     // weights
     for (const a of this.actions.values()) {
@@ -201,8 +214,9 @@ export class Mixer {
       this._events(a, t0, t1, a === this.dominant());
       if (a.clip.loop) t1 = ((t1 % a.clip.duration) + a.clip.duration) % a.clip.duration; else t1 = clamp(t1, 0, a.clip.duration);
       a.time = t1;
+      // one-shots fade themselves out before their end
+      if (a.once !== undefined && a.to > 0 && a.time >= a.clip.duration - a.once - 1e-4) { this._fadeTo(a, 0, a.once); a.once = undefined; }
     }
-    return this.evaluate();
   }
   _events(a, t0, t1, fire) {
     if (!fire || !a.clip.events.length || !this.listeners.length || a.weight < 0.3) return;
@@ -211,20 +225,100 @@ export class Mixer {
       for (let wrap = 0; wrap <= 1; wrap++) { const et = e.t + wrap * d; if (et > t0 && et <= t1) this.listeners.forEach((f) => f(e, a)); }
     }
   }
-  evaluate() {
+  // Blend this mixer's actions into this.pose; returns the summed weight.
+  evaluatePose() {
     const active = [...this.actions.values()].filter((a) => a.weight > 1e-4);
     while (this._tmp.length < active.length) this._tmp.push(createPose(this.skeleton.length));
     const poses = active.map((a, k) => sampleClip(a.clip, this.skeleton, a.time, this._tmp[k]));
     blendPoses(this.pose, poses, active.map((a) => a.weight));
+    return active.reduce((s, a) => s + a.weight, 0);
+  }
+  evaluate() {
+    this.evaluatePose();
+    for (const l of this.layers) l.applyTo(this.pose);
     this.skeleton.copyPose(this.pose);
     this.skeleton.update();
     return this.pose;
   }
+  // Layers play on top of the base: override (masked replace) or additive (delta from the
+  // clip's first frame). mask: per-bone weights from boneMask(), or null for all bones.
+  addLayer(name, opts = {}) { const l = new AnimLayer(this, name, opts); this.layers.push(l); return l; }
+  layer(name) { return this.layers.find((l) => l.name === name); }
+  removeLayer(name) { this.layers = this.layers.filter((l) => l.name !== name); }
   // Weighted root-motion velocity (m/s in character space) for moving the character.
   rootVelocity(out = [0, 0, 0]) {
     out[0] = out[1] = out[2] = 0; let ws = 0;
     for (const a of this.actions.values()) { if (a.weight <= 0) continue; ws += a.weight; for (let k = 0; k < 3; k++) out[k] += a.clip.rootMotion[k] * a.weight * a.speed * this.timeScale; }
     if (ws > 0) for (let k = 0; k < 3; k++) out[k] /= ws;
     return out;
+  }
+}
+
+// Per-bone weights for a layer: every bone under one of `roots` gets `weight`; `weights`
+// overrides single bones (e.g. { spine: 0.4, chest: 0.8 } for a soft upper-body blend).
+export function boneMask(skeleton, roots = [], { weights = {}, exclude = [] } = {}) {
+  const n = skeleton.length, m = new Float32Array(n);
+  const rootIdx = roots.map((r) => skeleton.boneIndex(r)).filter((i) => i >= 0);
+  for (let i = 0; i < n; i++) {
+    let p = i;
+    while (p >= 0 && !rootIdx.includes(p)) p = skeleton.parentIndex[p];
+    if (p >= 0) m[i] = 1;
+  }
+  for (const b of exclude) { const i = skeleton.boneIndex(b); if (i >= 0) m[i] = 0; }
+  for (const [b, w] of Object.entries(weights)) { const i = skeleton.boneIndex(b); if (i >= 0) m[i] = w; }
+  return m;
+}
+
+export class AnimLayer extends Mixer {
+  constructor(parent, name, { mask = null, additive = false, weight = 1 } = {}) {
+    super(parent.skeleton, []);
+    this.parent = parent; this.name = name; this.clips = parent.clips;
+    this.mask = mask; this.additive = additive; this.weight = weight;
+    this._wFade = null; this._refs = new Map();
+  }
+  get listeners() { return this.parent ? this.parent.listeners : []; }
+  set listeners(v) { /* events go to the parent mixer's listeners */ }
+  // Play a clip once and fade out before it ends (gestures, reloads, hit reactions).
+  playOnce(name, { fadeIn = 0.2, fadeOut = 0.3, speed = 1 } = {}) {
+    this.play(name, { fade: fadeIn, restart: true, speed });
+    const a = this.actions.get(name); if (a) a.once = fadeOut;
+    return a;
+  }
+  fadeWeight(to, duration = 0.3) { this._wFade = { from: this.weight, to, t: 0, d: Math.max(1e-3, duration) }; }
+  get busy() { for (const a of this.actions.values()) if (a.weight > 0.01 || a.to > 0) return true; return false; }
+  advance(dt) {
+    if (this._wFade) { const f = this._wFade; f.t = Math.min(1, f.t + dt / f.d); this.weight = f.from + (f.to - f.from) * easeInOut(f.t); if (f.t >= 1) this._wFade = null; }
+    super.advance(dt * (this.parent?.timeScale ?? 1));
+  }
+  _ref(clip) {
+    if (!this._refs.has(clip)) this._refs.set(clip, sampleClip(clip, this.skeleton, 0));
+    return this._refs.get(clip);
+  }
+  applyTo(base) {
+    if (this.weight <= 0) return;
+    const total = this.evaluatePose();
+    if (total <= 1e-4) return;
+    const k = this.weight * Math.min(1, total), n = this.skeleton.length, L = this.pose;
+    let ref = null;
+    if (this.additive) { // weighted reference pose of the active clips
+      const active = [...this.actions.values()].filter((a) => a.weight > 1e-4);
+      ref = blendPoses(createPose(n), active.map((a) => this._ref(a.clip)), active.map((a) => a.weight));
+    }
+    const q = quat.create(), d = quat.create(), id = quat.create();
+    for (let i = 0; i < n; i++) {
+      const w = k * (this.mask ? this.mask[i] : 1);
+      if (w <= 0) continue;
+      const o = i * 4, b = base.rot.subarray(o, o + 4), l = L.rot.subarray(o, o + 4);
+      if (this.additive) {
+        const r = ref.rot.subarray(o, o + 4);
+        quat.multiply(d, quat.invert(q, r), l); // delta = inverse(ref) * layer
+        quat.slerp(d, id, d, w);
+        quat.multiply(q, b, d); b.set(q);
+        for (let c = 0; c < 3; c++) base.pos[i * 3 + c] += (L.pos[i * 3 + c] - ref.pos[i * 3 + c]) * w;
+      } else {
+        quat.slerp(q, b, l, w); b.set(q);
+        for (let c = 0; c < 3; c++) base.pos[i * 3 + c] += (L.pos[i * 3 + c] - base.pos[i * 3 + c]) * w;
+      }
+    }
   }
 }

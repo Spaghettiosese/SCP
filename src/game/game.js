@@ -47,22 +47,22 @@ export class Game {
       Object.assign(env, {
         sky: true, mesas: false, storm: 1, clouds: false, sunDirection: vec3.normalize([0, 0, 0], [-0.3, 0.75, 0.55]), sunColor: [0.55, 0.65, 0.9], sunIntensity: 0.18,
         skyColor: [0.16, 0.2, 0.3], groundColor: [0.06, 0.065, 0.07], ambient: 0.9, horizonColor: [0.12, 0.15, 0.2], zenithColor: [0.05, 0.07, 0.12],
-        fogColor: [0.06, 0.075, 0.1], fogDensity: 0.022, exposure: 1.35, wet: 0.85, shadowCenter: [0, 0, 0], shadowRadius: 30,
+        fogColor: [0.06, 0.075, 0.1], fogDensity: 0.022, exposure: 1.35, wetness: 0.85, rain: 1, shadowCenter: [0, 0, 0], shadowRadius: 30,
+        volumetric: 0.7, volumeDensity: 0.035, sunShafts: 0.1, lampGlow: 1.2, anisotropy: 0.55, volumeDistance: 55, fogHeight: 0.12, godRays: 0, night: 0, aoIntensity: 1.4,
       });
-      env.shadowLight = this.level.markers.searchlight;
       this.effects.rain = 1;
       this.audio.setSpace('outdoor');
     } else {
       this.areaName = 'HCZ · SECTOR 2';
       Object.assign(env, {
         sky: false, storm: 0, sunIntensity: 0, skyColor: [0.08, 0.08, 0.09], groundColor: [0.03, 0.03, 0.03], ambient: 0.14,
-        fogColor: [0.012, 0.012, 0.014], fogDensity: 0.03, exposure: 1.25, wet: 0, flash: 0,
+        fogColor: [0.012, 0.012, 0.014], fogDensity: 0.03, exposure: 1.25, wetness: 0, rain: 0, flash: 0,
+        volumetric: 0.9, volumeDensity: 0.06, sunShafts: 0, lampGlow: 1.4, anisotropy: 0.6, volumeDistance: 30, fogHeight: 0, godRays: 0, aoIntensity: 1.6,
       });
-      env.shadowLight = P.flashlight;
       this.effects.rain = 0;
       this.audio.setSpace('indoor');
     }
-    env.lights = [...this.level.lights.filter((l) => l.area === n), P.flashlight, ...this.effects.lights];
+    env.dynLights = [...this.level.lights.filter((l) => l.area === n), P.flashlight, ...this.effects.lights];
   }
   areaLightsOn() { return this.area === 1 || this.powerOn; }
 
