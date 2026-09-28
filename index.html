@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SCP: Epsilon-11 — Site-80 Tech Demo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700;800&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="src/ui/hud.css">
+</head>
+<body class="in-menu">
+<canvas id="game"></canvas>
+<canvas id="portraitCanvas" width="160" height="160"></canvas>
+
+<!-- ============================ HUD ============================ -->
+<div id="hud">
+  <div id="markerLayer"></div>
+  <div id="nameLayer"></div>
+  <div id="enemyPlate"></div>
+  <div id="dmgLayer"></div>
+  <div id="scope"><div class="scopeRing"></div><div class="reticle"><i class="h"></i><i class="v"></i><i class="c"></i><b class="m1"></b><b class="m2"></b><b class="m3"></b></div></div>
+
+  <div id="crosshair"><i class="t"></i><i class="b"></i><i class="l"></i><i class="r"></i><i class="d"></i></div>
+  <div id="hitmarker"><i></i><i></i><i></i><i></i></div>
+
+  <div id="objective"><div id="objTitle">—</div><div id="objText"></div></div>
+  <div id="killfeed"></div>
+  <div id="toast"></div>
+  <div id="subtitle"></div>
+  <div id="prompt"><div id="promptRing"><span>F</span></div><div id="promptText"></div></div>
+  <div id="blinkBox"><div id="blinkIcon"></div><div class="blinkCol"><div class="blinkTrack"><div id="blinkFill"></div></div><div class="blinkHint">[X] BLINK SAFELY WHEN THE SQUAD IS WATCHING</div><div id="eyesOn"></div></div></div>
+
+  <!-- bottom-left: tickets + minimap + squad -->
+  <div id="bl">
+    <div id="tickets"><span id="scoreA">0</span><span class="tk-lab"><em class="d">D-CL</em> <em class="m">E-11</em></span><span id="scoreB">5</span><div class="tkbars"><div id="scoreBarA"></div><div id="scoreBarB"></div></div></div>
+    <div id="mapWrap"><canvas id="minimap" width="200" height="190"></canvas><div id="areaName">—</div><div id="keyHints"><span><b>Q</b>/<b>E</b> LEAN</span><span><b>T</b> LIGHT</span><span><b>N</b> NVG</span><span><b>G</b> FRAG</span></div></div>
+    <div id="squadList"></div>
+  </div>
+
+  <!-- bottom-center compass -->
+  <div id="compass"><div id="compassTape"></div><div id="compassMark"></div><div id="heading">0 N</div></div>
+
+  <!-- bottom-right: weapon panel -->
+  <div id="br">
+    <div id="wtop"><span id="wmode">AUTO</span><span id="wname">M4A1</span></div>
+    <div id="wmain">
+      <div class="gadget"><span class="key">T</span><span id="lightIcon" class="gic"></span><span id="nvgIcon" class="gic"></span></div>
+      <div id="ammoMag">030</div>
+      <div id="ammoRes">180</div>
+    </div>
+    <div id="wsub"><span id="reloadHint">[R] RELOAD</span><span class="hp"><span id="hpIcon"></span><span id="hpNum">+100</span></span></div>
+    <div id="hpTrack"><div id="hpBar"></div></div>
+    <div id="slots">
+      <div class="slot" id="slot1"><div class="sicon"></div><span class="scount"></span><span class="skey">1</span></div>
+      <div class="slot" id="slot2"><div class="sicon"></div><span class="scount"></span><span class="skey">2</span></div>
+      <div class="slot small" id="slot3"><div class="svg" id="slot3icon"></div><span class="scount" id="slot3count">2</span><span class="skey">3</span></div>
+      <div class="slot small" id="slot4"><div class="svg" id="slot4icon"></div><span class="scount" id="slot4count">2</span><span class="skey">4</span></div>
+    </div>
+  </div>
+  <div id="fps"></div>
+</div>
+
+<div id="screenFlash"></div>
+<div id="letterbox"><i></i><i></i></div>
+<div id="banner"><div id="bannerTitle"></div><div id="bannerSub"></div></div>
+<div id="skip"><span>HOLD SPACE TO SKIP</span><div class="skipTrack"><div id="skipFill"></div></div></div>
+
+<!-- ============================ SCREENS ============================ -->
+<div id="loading"><div class="ld-emblem"></div><div class="ld-title">SITE-80</div><div class="ld-sub">MOBILE TASK FORCE EPSILON-11 · "NINE-TAILED FOX"</div><div class="ld-track"><div id="loadBar"></div></div><div id="loadText">Initializing…</div></div>
+
+<div class="screen" id="scr-menu">
+  <div class="menuCol">
+    <div class="brand"><div class="ld-emblem small"></div><div><div class="brandT">SCP · EPSILON-11</div><div class="brandS">SITE-80 CONTAINMENT BREACH — TECH DEMO</div></div></div>
+    <button id="btnDeploy" class="primary">DEPLOY</button>
+    <button id="btnLoadout">LOADOUT</button>
+    <button id="btnSettings">SETTINGS</button>
+    <button id="btnControls">CONTROLS</button>
+    <div class="menuNote">Built on the ShapeForge engine: every model, rig and animation is procedural. Headphones recommended.</div>
+  </div>
+  <div class="brief">
+    <div class="briefH">OPERATION BRIEF</div>
+    <p>At 03:20 local, Site-80 went dark. Heavy Containment reports a full breach. Class-D personnel have overrun the Gate B surface checkpoint.</p>
+    <p><b>SCP-173</b> is unaccounted for. It cannot move while observed. <b>Do not blink without calling it.</b></p>
+    <div class="briefH">OBJECTIVES</div>
+    <ol><li>Secure the Gate B checkpoint</li><li>Override the blast door and hold</li><li>Restore power to HCZ Sector 2</li><li>Recontain SCP-173</li></ol>
+  </div>
+</div>
+
+<div class="screen" id="scr-loadout">
+  <div class="panel wide">
+    <h2>LOADOUT</h2>
+    <h3>PRIMARY</h3><div class="wgrid" id="primaries"></div>
+    <h3>SIDEARM</h3><div class="wgrid" id="sidearms"></div>
+    <div class="row"><span class="note">Also carried: 2× M67 frag · 2× medkit · weapon light · PVS-31 night vision</span><button data-back>BACK</button></div>
+  </div>
+</div>
+
+<div class="screen" id="scr-settings">
+  <div class="panel">
+    <h2>SETTINGS</h2>
+    <label class="set">Mouse sensitivity <span data-val="sensitivity"></span><input type="range" min="0.2" max="3" step="0.05" data-set="sensitivity"></label>
+    <label class="set">Field of view <span data-val="fov"></span><input type="range" min="60" max="100" step="1" data-set="fov"></label>
+    <label class="set">Master volume <span data-val="volume"></span><input type="range" min="0" max="1" step="0.05" data-set="volume"></label>
+    <label class="set">Difficulty (damage taken) <span data-val="difficulty"></span><input type="range" min="0.4" max="1.8" step="0.1" data-set="difficulty"></label>
+    <label class="set">Graphics quality (reload to apply) <select data-set="quality"><option value="high">High</option><option value="low">Low</option></select></label>
+    <label class="set chk"><input type="checkbox" data-set="invertY"> Invert mouse Y</label>
+    <div class="row"><span></span><button data-back>BACK</button></div>
+  </div>
+</div>
+
+<div class="screen" id="scr-controls">
+  <div class="panel">
+    <h2>CONTROLS</h2>
+    <div class="ctl">
+      <span><b>W A S D</b> Move</span><span><b>SHIFT</b> Sprint</span><span><b>SPACE</b> Jump</span><span><b>C / CTRL</b> Crouch</span>
+      <span><b>Q / E</b> Lean</span><span><b>LMB</b> Fire</span><span><b>RMB</b> Aim down sights</span><span><b>R</b> Reload</span>
+      <span><b>1 / 2 / WHEEL</b> Switch weapon</span><span><b>B</b> Fire mode</span><span><b>V</b> Melee</span><span><b>G / 3</b> Frag grenade</span>
+      <span><b>H / 4</b> Medkit</span><span><b>F (hold)</b> Interact</span><span><b>T</b> Weapon light</span><span><b>N</b> Night vision</span>
+      <span><b>X</b> Blink (SCP-173)</span><span><b>I</b> Inspect weapon</span><span><b>ESC</b> Pause</span><span><b>Aim at a squadmate</b> Nameplate</span>
+    </div>
+    <p class="tip">Unarmed Class-D may surrender if you hold your sights on them up close. Detaining them counts toward the mission.</p>
+    <div class="row"><span></span><button data-back>BACK</button></div>
+  </div>
+</div>
+
+<div class="screen" id="scr-pause">
+  <div class="menuCol center">
+    <div class="brandT">PAUSED</div>
+    <button id="btnResume" class="primary">RESUME</button>
+    <button id="btnRestartCp">RESTART FROM CHECKPOINT</button>
+    <button id="btnPauseSettings">SETTINGS</button>
+    <button id="btnQuit">QUIT TO MENU</button>
+  </div>
+</div>
+
+<div class="screen" id="scr-dead">
+  <div class="menuCol center">
+    <div class="deadT">K.I.A.</div>
+    <div id="deadCause">KILLED IN ACTION</div>
+    <button id="btnRetry" class="primary">RESTART FROM CHECKPOINT [R]</button>
+  </div>
+</div>
+
+<div class="screen" id="scr-complete">
+  <div class="menuCol center">
+    <div class="ld-emblem small"></div>
+    <div class="brandT">SCP-173 RECONTAINED</div>
+    <div class="brandS">TECH DEMO COMPLETE · SECTOR 2 SECURE</div>
+    <div id="stats"></div>
+    <p class="tip">"...Chamber 096 just stopped reporting." — to be continued.</p>
+    <button id="btnAgain" class="primary">PLAY AGAIN</button>
+  </div>
+</div>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>

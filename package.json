@@ -1,0 +1,11 @@
+{
+  "name": "scp-epsilon11-techdemo",
+  "version": "0.1.0",
+  "description": "SCP: Epsilon-11 — first-person tech demo built on the ShapeForge WebGL2 engine (procedural models, rigs and animation).",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "start": "npx --yes http-server -p 8080 -c-1 .",
+    "test": "node tools/smoke.mjs"
+  }
+}
