@@ -116,12 +116,12 @@ export class Game {
   }
   melee(attacker, target, dmg) {
     if (!target) return;
-    if (target === this.player) { this.player.damage(dmg, attacker); this.audio.impact(this.player.chest(), 'flesh'); this.player.shake = 0.8; }
+    if (target === this.player) { if (!this.player.controlsEnabled) return; this.player.damage(dmg, attacker); this.audio.impact(this.player.chest(), 'flesh'); this.player.shake = 0.8; }
     else if (target.team === 'mtf') target.damage(dmg, 'torso', null, attacker);
   }
   // bullets that pass near the player: hit (capsule test) or whiz by
   bulletNearPlayer(o, d, shooter, dmg, maxT) {
-    const P = this.player; if (!P.alive || shooter.team === 'mtf') return;
+    const P = this.player; if (!P.alive || !P.controlsEnabled || shooter.team === 'mtf') return;
     const c = P.chest();
     const w = [c[0] - o[0], c[1] - o[1], c[2] - o[2]], t = w[0] * d[0] + w[1] * d[1] + w[2] * d[2];
     if (t < 0 || t > maxT) return;

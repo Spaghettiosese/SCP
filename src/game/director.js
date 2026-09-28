@@ -33,6 +33,7 @@ export class Director {
     g.setArea(1);
     g.hudVisible = false;
     g.player.controlsEnabled = false;
+    g.player.pos = [...L.markers.playerStart1]; g.player.hp = 100; g.player.alive = true;
     g.clearEnemies();
     this.heli = this.heli || createHelicopter();
     g.scene.add(this.heli);

@@ -50,7 +50,7 @@ export class Player {
 
   // ------------------------------------------------------------------ damage
   damage(amount, from) {
-    if (!this.alive || this.game.godMode) return;
+    if (!this.alive || this.game.godMode || !this.controlsEnabled) return;
     this.hp -= amount; this.lastDamage = this.game.time;
     this.game.audio.hurt();
     if (from) this.game.hud.damageFrom(from, this);

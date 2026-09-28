@@ -337,7 +337,7 @@ export class ClassD extends Human {
       const cands = [g.player, ...g.actors.filter((a) => a.team === 'mtf' && a.alive)];
       let best = null, bd = 40;
       for (const c of cands) {
-        if (!c.alive || (c.area !== undefined && c.area !== this.area)) continue;
+        if (!c.alive || (c.area !== undefined && c.area !== this.area) || (c === g.player && !g.player.controlsEnabled)) continue;
         const d = dist2D(c.pos, this.pos);
         const lookRange = this.state === 'combat' ? 40 : 26;
         if (d < Math.min(bd, lookRange) && this.canSee(c === g.player ? g.player.eye() : c.center(), this.state === 'combat' ? 6.3 : 2.4)) { best = c; bd = d; }
@@ -345,6 +345,7 @@ export class ClassD extends Human {
       if (best) { this.target = best; if (this.state === 'idle') { this.state = 'combat'; if (Math.random() < 0.5) g.shout(this); } }
       else if (this.state === 'combat' && this.target && !this.target.alive) this.target = null;
     }
+    if (this.target === g.player && !g.player.controlsEnabled) this.target = null;
     if (this.state === 'idle') {
       // loiter / pace
       if (!this.moveTarget || dist2D(this.pos, this.moveTarget) < 0.6) { if (Math.random() < dt * 0.3) this.moveTarget = [this.wander[0] + rand(-3, 3), 0, this.wander[2] + rand(-3, 3)]; }
