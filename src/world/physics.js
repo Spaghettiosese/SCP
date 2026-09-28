@@ -148,14 +148,12 @@ export class NavGraph {
     return true;
   }
   nearest(p, area = null, needSight = true) {
-    let best = null, bd = Infinity;
-    for (const n of this.nodes) {
-      if (area !== null && n.area !== area) continue;
-      const d = Math.hypot(n.p[0] - p[0], n.p[2] - p[2]);
-      if (d < bd && (!needSight || this.clear([p[0], 0, p[2]], n.p, 0.2))) { bd = d; best = n; }
-    }
-    if (!best && needSight) return this.nearest(p, area, false);
-    return best;
+    const cand = [];
+    for (const n of this.nodes) if (area === null || n.area === area) cand.push([Math.hypot(n.p[0] - p[0], n.p[2] - p[2]), n]);
+    cand.sort((a, b) => a[0] - b[0]);
+    if (!needSight) return cand.length ? cand[0][1] : null;
+    for (let i = 0; i < Math.min(6, cand.length); i++) if (this.clear([p[0], 0, p[2]], cand[i][1].p, 0.2)) return cand[i][1];
+    return cand.length ? cand[0][1] : null;
   }
   // A* from world position to world position; returns list of points (excluding start)
   path(from, to, area = null) {

@@ -291,6 +291,7 @@ export class Director {
     const g = this.g, L = g.level, P = g.player;
     this.stage = 'a2'; this.t = 0; this.events = []; this.checkpoint = cp;
     this.elevatorRumble = false;
+    for (const k of [...g.hud.markers.keys()]) g.hud.setMarker(k, null);
     g.clearEnemies();
     g.setArea(2);
     g.powerOn = false;
@@ -331,7 +332,7 @@ export class Director {
     L.markers.controlLight.intensity = on ? 30 : 0;
     L.markers.powerLamp.emissive = on ? '#20ff5a' : '#ff2010';
     for (const l of L.markers.emergency) l.intensity = on ? 4 : 10;
-    g.scene.environment.ambient = on ? 0.22 : 0.14;
+    g.scene.environment.ambient = on ? 0.22 : 0.07;
     void instant;
   }
   restorePower() {

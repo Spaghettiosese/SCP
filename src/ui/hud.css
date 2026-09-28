@@ -211,4 +211,5 @@ body.cinematic #letterbox i { height: 11vh; }
 #stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 20px 0; width: 100%; }
 #stats div { background: rgba(69, 240, 207, 0.08); border: 1px solid rgba(69, 240, 207, 0.2); padding: 10px; }
 #stats b { display: block; font-size: 34px; color: var(--teal2); } #stats span { font-size: 12px; letter-spacing: 1px; opacity: 0.75; text-transform: uppercase; }
-@media (max-width: 900px) { #br { transform: scale(0.75); transform-origin: right bottom; } #bl { transform: scale(0.75); transform-origin: left bottom; } #compass { transform: translateX(-50%) scale(0.8); } }
+@media (max-width: 1400px) { #br { transform: scale(0.8); transform-origin: right bottom; } #bl { transform: scale(0.8); transform-origin: left bottom; } #subtitle { bottom: 150px; font-size: 18px; } }
+@media (max-width: 1000px) { #br { transform: scale(0.62); } #bl { transform: scale(0.62); } #compass { transform: translateX(-50%) scale(0.75); } #subtitle { bottom: 70px; max-width: 60vw; } }

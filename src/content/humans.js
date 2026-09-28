@@ -126,12 +126,12 @@ function mtfGear(o) {
     P('Pouch Mags', rbox(0.022, 0.03, 0.058, 0.004), 'polymer', { bone: 'spine' }, { p: [-0.075, 1.29, 0.138], m: [{ type: 'array', count: 3, offsetX: 0.075, offsetY: 0, offsetZ: 0, rotX: 0, rotY: 0, rotZ: 0, scaleStep: 1 }] }),
     P('Pouch Flaps', rbox(0.066, 0.02, 0.05, 0.006), 'webbing', { bone: 'spine' }, { p: [-0.075, 1.285, 0.142], m: [{ type: 'array', count: 3, offsetX: 0.075, offsetY: 0, offsetZ: 0, rotX: 0, rotY: 0, rotZ: 0, scaleStep: 1 }] }),
     P('Chest Placard', rbox(0.2, 0.075, 0.018, 0.005), 'carrier', { bone: 'chest' }, { p: [0, 1.405, 0.13] }),
-    P('Chest Patch', rbox(0.15, 0.045, 0.004, 0.001), 'tape', { bone: 'chest' }, { p: [0, 1.405, 0.14] }),
+    P('Chest Patch', rbox(0.15, 0.045, 0.004, 0), 'tape', { bone: 'chest' }, { p: [0, 1.405, 0.14] }),
     P('Radio Pouch', rbox(0.07, 0.12, 0.05, 0.01), 'carrier', { bone: 'chest' }, { p: [0.12, 1.33, -0.14] }),
     P('Radio', rbox(0.055, 0.1, 0.035, 0.006), 'polymer', { bone: 'chest' }, { p: [0.12, 1.4, -0.14] }),
     P('Antenna', cyl(0.004, 0.003, 0.36, 6), 'rubber', { bone: 'antenna' }, { p: [0.125, 1.6, -0.17] }),
     P('Hydration Pack', rbox(0.2, 0.26, 0.05, 0.03), 'carrier', { bones: ['spine', 'chest'], falloff: 6 }, { p: [0, 1.27, -0.15] }),
-    P('Shoulder Patch', rbox(0.004, 0.07, 0.07, 0.001), 'patch', { bone: 'upperArm.L' }, { p: [0.232, 1.35, -0.012], r: [0, 0, 12], mirror: true }),
+    P('Shoulder Patch', rbox(0.004, 0.07, 0.07, 0), 'patch', { bone: 'upperArm.L' }, { p: [0.232, 1.35, -0.012], r: [0, 0, 12], mirror: true }),
     // battle belt + thigh holster
     P('Belt', sq(0.168, 0.028, 0.114, 0.12, 0.62, { widthSegments: 36, heightSegments: 6 }), 'webbing', { bones: ['hips', 'spine'], falloff: 8 }, { p: [0, 1.03, 0] }),
     P('Belt Pouch', rbox(0.06, 0.08, 0.05, 0.01), 'carrier', { bone: 'hips' }, { p: [0.13, 1.01, 0.08], r: [0, 30, 0], mirror: true }),
@@ -198,8 +198,8 @@ function dclassGear(o) {
   const parts = [
     P('Collar', { type: 'torus', radius: 0.066, tube: 0.018, radialSegments: 8, tubularSegments: 24, arc: 360, tubeScaleY: 1.3 }, 'jumpsuit', { bones: ['chest', 'neck'], falloff: 6 }, { p: [0, 1.5, 0.006], r: [14, 0, 0] }),
     P('Undershirt V', rbox(0.06, 0.07, 0.01, 0.003), 'undershirt', { bone: 'chest' }, { p: [0, 1.47, 0.083], r: [-20, 0, 0] }),
-    P('Number Patch', rbox(0.1, 0.05, 0.004, 0.001), 'patch', { bone: 'chest' }, { p: [0.075, 1.38, 0.104], r: [-6, 12, 0] }),
-    P('Back Stencil', rbox(0.18, 0.09, 0.004, 0.001), 'patch', { bone: 'chest' }, { p: [0, 1.36, -0.1], r: [0, 180, 0] }),
+    P('Number Patch', rbox(0.1, 0.05, 0.004, 0), 'patch', { bone: 'chest' }, { p: [0.075, 1.38, 0.104], r: [-6, 12, 0] }),
+    P('Back Stencil', rbox(0.18, 0.09, 0.004, 0), 'patch', { bone: 'chest' }, { p: [0, 1.36, -0.1], r: [0, 180, 0] }),
     P('Chest Pocket', rbox(0.08, 0.07, 0.006, 0.002), 'jumpsuitDark', { bone: 'chest' }, { p: [-0.075, 1.36, 0.1], r: [-6, -12, 0] }),
     P('Waist Seam', sq(0.16, 0.012, 0.106, 0.12, 0.62, { widthSegments: 32, heightSegments: 4 }), 'jumpsuitDark', { bones: ['hips', 'spine'], falloff: 8 }, { p: [0, 1.04, 0] }),
     P('Cuff', cyl(0.06, 0.062, 0.05, 16, false), 'jumpsuitDark', { bone: 'shin.L' }, { mirror: true, p: [0.11, 0.2, -0.008] }),
@@ -343,7 +343,7 @@ export function applyAim(ch, weaponId, { pitch = 0, yaw = 0, mode = 'aim', recoi
   const ch0 = sk.worldHead(ci);
   const pistol = def.pistol;
   const off = pistol ? [-0.03, 0.16 - recoil * 0.02, 0.42] : mode === 'sit' ? [-0.06, 0.02, 0.24] : mode === 'low' ? [-0.1, 0.04, 0.28] : [-0.105, 0.14, 0.27 - recoil * 0.04];
-  const gq = quat.multiply(quat.create(), cq, E(pd * (mode === 'aim' ? 0.4 : 1) - recoil * 6, pistol ? 0 : -4, pistol ? 0 : 6));
+  const gq = quat.multiply(quat.create(), cq, E(-pd * (mode === 'aim' ? 0.4 : 1) - recoil * 6, pistol ? 0 : -4, pistol ? 0 : 6));
   const gp = vec3.transformQuat([0, 0, 0], off, cq);
   vec3.add(gp, gp, ch0);
   const weapon = { p: gp, q: gq };

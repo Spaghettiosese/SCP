@@ -75,4 +75,17 @@ if (view === 'chars') {
   let n = 0; const loop = () => { renderer.render(scene, camera, { fog: false }); if (++n < 3) requestAnimationFrame(loop); else window.__ready = true; };
   loop();
 }
+
+if (view === 'sign') {
+  const K = await import('../src/content/props.js');
+  const T = await import('../src/content/textures.js');
+  const { StaticBuilder } = await import('../src/util.js');
+  const sb = new StaticBuilder({});
+  K.sign(sb, T.signTexture('SITE-80', { sub: 'SECURE', emblem: true }), 4, 1, [0, 1.5, 0], 0);
+  K.sign(sb, T.signTexture('GATE B', { sub: 'ROT 180' }), 4, 1, [0, 1.5, -3], 180);
+  scene.add(sb.build('s'));
+  camera.position.set(JSON.parse(q.get('cp') || '[0,1.5,5]')); camera.target.set(JSON.parse(q.get('ct') || '[0,1.5,0]'));
+  let n = 0; const loop = () => { renderer.render(scene, camera, { fog: false }); if (++n < 3) requestAnimationFrame(loop); else window.__ready = true; };
+  loop();
+}
 </script></body></html>

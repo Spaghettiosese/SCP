@@ -434,8 +434,10 @@ export class SCP173 {
       const tp = target.pos;
       const step = Math.min(td - 0.9, 14 * dt);
       if (step > 0) {
-        const path = g.nav.path(this.pos, tp, this.area);
-        const wp = path[0] && dist2D(path[0], this.pos) > 0.3 ? path[0] : (path[1] || tp);
+        this.repath = (this.repath || 0) - dt;
+        if (this.repath <= 0 || !this.path || !this.path.length) { this.path = g.nav.path(this.pos, tp, this.area); this.repath = 0.3; }
+        while (this.path.length > 1 && dist2D(this.path[0], this.pos) < 0.4) this.path.shift();
+        const wp = this.path[0] || tp;
         const yaw = yawTo(this.pos, wp);
         const r = g.physics.move(this.pos, [Math.sin(yaw) * step, 0, Math.cos(yaw) * step], 0.3, 1.8, { snap: true });
         this.pos = r.pos; this.yaw = yawTo(this.pos, tp);

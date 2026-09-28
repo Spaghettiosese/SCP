@@ -200,6 +200,18 @@ export class Game {
       if (d.type === 'flicker') { d.light.intensity = d.light.baseIntensity * (Math.sin(this.time * 31 + d.seed) > 0.93 || Math.random() < 0.03 ? 0.1 : 1); }
       if (d.type === 'steam' && Math.random() < dt * 25) this.effects.steam(d.pos);
     }
+    // scavenge ammo from weapons dropped by dead Class-D
+    const P = this.player;
+    for (const a of this.actors) {
+      if (a.alive || a.team !== 'dclass' || !a.gun || a.looted || !a.gun.position) continue;
+      const gp = a.gun.position;
+      if (Math.hypot(gp[0] - P.pos[0], gp[2] - P.pos[2]) < 1.4) {
+        a.looted = true;
+        for (const id of P.loadout) { const d = WEAPONS[id]; P.ammo[id].reserve = Math.min(d.reserve * 1.5, P.ammo[id].reserve + d.mag); }
+        this.hud.toast('AMMO SCAVENGED');
+        this.audio.mech('magIn');
+      }
+    }
     // doors
     for (const k of Object.keys(this.level.doors)) {
       const D = this.level.doors[k];

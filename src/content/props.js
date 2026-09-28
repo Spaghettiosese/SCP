@@ -65,7 +65,7 @@ export function kitMaterials() {
 export function texturedMaterial(name, tex, extra = {}) { return new Material({ name, color: '#ffffff', roughness: 0.7, texture: tex, ...extra }); }
 export function sign(sb, tex, w, h, pos, rotY = 0, extra = {}) {
   const m = texturedMaterial('sign:' + (tex.__id || (tex.__id = Math.random().toString(36).slice(2))), tex, extra);
-  sb.add(m, rbox(w, h, 0.02, 0.003), { position: pos, rotation: [0, rotY, 0] });
+  sb.add(m, rbox(w, h, 0.02, 0), { position: pos, rotation: [0, rotY, 0] });
   return m;
 }
 
@@ -78,6 +78,7 @@ export function npcWeapon(id) {
     for (const p of WEAPONS[id].parts()) {
       const bone = p.bind.bone;
       if (bone === 'flash' || bone === 'shell' || bone === 'nade' || p.material === 'glass' || p.material === 'reticle') continue;
+      if (/Ribs|M-LOK|Serration|Slots|Knurl|Buttons|Flutes|Grooves|Ports|Rings|Dots|Dot$|Round|Bullet|Brass/.test(p.name)) continue; // tiny details, invisible at NPC range
       sb.add(mats[p.material], p.shape, { position: p.position, rotation: p.rotation, scale: p.scale, modifiers: p.modifiers });
     }
     const flash = new StaticBuilder({});
@@ -328,7 +329,7 @@ export function terminal(sb, M, x, y, z, ry, screenTex) {
   sb.add(M.metalDark, rbox(0.6, 1.1, 0.35, 0.03), { position: [0, 0.55, 0] });
   sb.add(M.metalPanel, rbox(0.62, 0.08, 0.5, 0.02), { position: [0, 1.12, 0.06], rotation: [-15, 0, 0] });
   const scr = screenTex ? texturedMaterial('term:' + Math.random(), screenTex, { emissive: '#ffffff', emissiveStrength: 0.9, unlit: true }) : M.screen;
-  sb.add(scr, rbox(0.46, 0.3, 0.02, 0.005), { position: [0, 1.38, 0.1], rotation: [-12, 0, 0] });
+  sb.add(scr, rbox(0.46, 0.3, 0.02, 0), { position: [0, 1.38, 0.1], rotation: [-12, 0, 0] });
   sb.add(M.metalDark, rbox(0.52, 0.36, 0.06, 0.01), { position: [0, 1.38, 0.07], rotation: [-12, 0, 0] });
   sb.add(M.lampGreen, rbox(0.04, 0.04, 0.02, 0.005), { position: [0.2, 0.95, 0.18] });
   sb.add(M.lampRed, rbox(0.04, 0.04, 0.02, 0.005), { position: [0.12, 0.95, 0.18] });
