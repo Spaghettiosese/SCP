@@ -215,7 +215,7 @@ function loop(now) {
 }
 
 // ---------------------------------------------------------------- automated test hooks (?auto=...)
-function autoStart() {
+async function autoStart() {
   const mode = params.get('auto');
   audio.enabled = false;
   if (mode === 'intro') { deploy(false); director.t = parseFloat(params.get('t') || '10'); }
@@ -228,7 +228,52 @@ function autoStart() {
   const cam = params.get('cam');
   if (cam) { const c = JSON.parse(cam), l = JSON.parse(params.get('look') || '[0,0,0]'); game.debugCam = { pos: c, target: l, fov: parseFloat(params.get('fov') || '60') }; game.hudVisible = !params.has('nohud'); }
   if (params.has('freeze')) setTimeout(() => { game.actors.forEach((a) => { a.update = a.updateAnim ? function (dt) { this.updateAnim(dt); } : () => {}; }); }, 500);
+  // fast logic-only simulation for tests: ?sim=seconds (&fire=1 holds the trigger at the nearest hostile)
+  const sim = parseFloat(params.get('sim') || '0');
+  if (sim > 0) {
+    const dt = 1 / 30, fire = params.has('fire'), prof = {}; window.__dbgShots = params.has('dbg') ? 400 : 0;
+    for (let i = 0; i < sim * 30; i++) {
+      const input = { mouse: [0, 0], move: [0, 0] };
+      if (fire) {
+        const P = game.player;
+        const vis = game.actors.filter((a) => a.team === 'dclass' && a.alive && !a.surrendered && a.area === game.area && game.physics.lineOfSight(P.eye(), a.center()));
+        const tgt = (vis.length ? vis : game.actors.filter((a) => a.team === 'dclass' && a.alive && !a.surrendered && a.area === game.area)).sort((a, b) => Math.hypot(a.pos[0] - P.pos[0], a.pos[2] - P.pos[2]) - Math.hypot(b.pos[0] - P.pos[0], b.pos[2] - P.pos[2]))[0];
+        if (tgt) { const e = P.eye(), c = tgt.center(); P.yaw = Math.atan2(c[0] - e[0], c[2] - e[2]); P.pitch = Math.atan2(c[1] - e[1], Math.hypot(c[0] - e[0], c[2] - e[2])); input.fire = (i % 6) < 3; input.ads = true; window.__tgt = [tgt.name, c.map((v) => +v.toFixed(2)), P.forward().map((v) => +v.toFixed(3)), [c[0] - e[0], c[1] - e[1], c[2] - e[2]].map((v) => +(v / Math.hypot(c[0] - e[0], c[1] - e[1], c[2] - e[2])).toFixed(3))]; input.move = [0, !vis.length || Math.hypot(c[0] - e[0], c[2] - e[2]) > 14 ? 1 : 0]; }
+      }
+      if (params.has('pilot')) pilot(input, i);
+      const T = (k, f) => { const t0 = performance.now(); f(); prof[k] = (prof[k] || 0) + performance.now() - t0; };
+      game.frame++; game.time += dt; T('director', () => director.update(dt)); T('player', () => game.player.update(dt, input));
+      for (const a of [...game.actors]) T(a.team, () => a.update(dt));
+      T('world', () => game.updateWorld(dt)); T('hud', () => game.hud.update(dt)); T('fx', () => game.effects.update(dt, game.player.eye()));
+    }
+    if (params.has('dbg')) {
+      const { hitscan } = await import('./game/actors.js');
+      const P = game.player, e = P.eye();
+      const tgt = game.actors.find((a) => a.team === 'dclass' && a.alive);
+      const c = tgt.center(), d = [c[0] - e[0], c[1] - e[1], c[2] - e[2]], L = Math.hypot(...d); d[0] /= L; d[1] /= L; d[2] /= L;
+      const h = hitscan(game, e, d, 200, null, { ignoreTeam: 'mtf' });
+      console.log('DBG', JSON.stringify({ e, c, L, hit: h && { t: h.t, actor: h.actor && h.actor.name, zone: h.zone, mat: h.material }, hb: tgt.hitboxes().slice(0, 3).map((b) => [b.a.map((v) => +v.toFixed(2)), b.b.map((v) => +v.toFixed(2))]), fwd: P.forward() }));
+    }
+    console.log('PROF ms/step', JSON.stringify(Object.fromEntries(Object.entries(prof).map(([k, v]) => [k, +(v / (sim * 30)).toFixed(2)]))));
+    const s2 = game.player.stats;
+    console.log('SIM', JSON.stringify({ stage: director.stage, phase: director.phase, hp: Math.round(game.player.hp), alive: game.player.alive, kills: s2.kills, shots: s2.shots, hits: s2.hits, hostiles: game.actors.filter((a) => a.team === 'dclass' && a.alive).length, pos: game.player.pos.map((v) => +v.toFixed(1)), squad: game.squad.map((q) => q.pos.map((v) => +v.toFixed(1))) }));
+  }
   const wait = parseFloat(params.get('wait') || '2');
+  function pilot(input, i) {
+    const P = game.player, L = game.level, d = director;
+    const go = (p) => { if (Math.hypot(P.pos[0] - p[0], P.pos[2] - p[2]) > 0.8) { P.pos = [p[0], 0, p[2]]; } };
+    if (d.stage === 'a1' && d.phase === 'door') { go([6.8, 0, 28.6]); const it = L.interact.find((x) => x.id === 'terminal'); if (it.enabled) { it.enabled = false; director.onInteract(it); log('terminal'); } }
+    if (d.stage === 'a1' && d.phase === 'enter') { go(L.markers.elevator.center); log('elevator'); }
+    if (d.stage === 'a2' && d.phase === 'power') { go([400 - 6, 0, 24.2]); const it = L.interact.find((x) => x.id === 'power'); if (it.enabled && i % 30 === 0) { it.enabled = false; director.onInteract(it); log('power'); } }
+    if (d.stage === 'a2' && d.phase === 'toChamber') go([400, 0, 42]);
+    if (d.stage === 'a2' && d.phase === 'contain' && d.s173) {
+      const s = d.s173; log('contain obs=' + s.observers);
+      const e = P.eye(), c = s.center(); P.yaw = Math.atan2(c[0] - e[0], c[2] - e[2]); P.pitch = Math.atan2(c[1] - e[1], Math.hypot(c[0] - e[0], c[2] - e[2]));
+      input.fire = false; input.move = [0, Math.hypot(c[0] - e[0], c[2] - e[2]) > 2 ? 1 : 0]; input.interact = true;
+      if (P.blink < 0.3) input.blinkPressed = s.observers > 1;
+    }
+  }
+  function log(m) { const logged = (window.__logged = window.__logged || new Set()); if (!logged.has(m)) { logged.add(m); console.log('PILOT', m, 't=' + game.time.toFixed(1)); } }
   setTimeout(() => { window.__ready = true; }, wait * 1000);
 }
 

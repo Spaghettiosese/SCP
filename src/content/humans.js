@@ -329,7 +329,7 @@ export function applyAim(ch, weaponId, { pitch = 0, yaw = 0, mode = 'aim', recoi
   if (!def || mode === 'none') return null;
   const idx = (n) => sk.boneIndex(n);
   const deg = 180 / Math.PI;
-  const P0 = mode === 'sit' ? -55 : mode === 'low' ? -28 : 0;
+  const P0 = mode === 'sit' ? -78 : mode === 'low' ? -28 : 0;
   const pd = (mode === 'aim' ? pitch * deg : 0) + P0;
   // twist the spine toward the aim direction, bend it for pitch
   const mul = (bone, e) => { const i = idx(bone); const q = quat.multiply(quat.create(), sk.rot.subarray(i * 4, i * 4 + 4), E(...e)); sk.rot.set(quat.normalize(q, q), i * 4); };
@@ -342,7 +342,7 @@ export function applyAim(ch, weaponId, { pitch = 0, yaw = 0, mode = 'aim', recoi
   const cq = sk.worldRotation(ci, quat.create());
   const ch0 = sk.worldHead(ci);
   const pistol = def.pistol;
-  const off = pistol ? [-0.03, 0.16 - recoil * 0.02, 0.42] : mode === 'sit' ? [-0.06, 0.02, 0.24] : mode === 'low' ? [-0.1, 0.04, 0.28] : [-0.105, 0.14, 0.27 - recoil * 0.04];
+  const off = pistol ? [-0.03, 0.16 - recoil * 0.02, 0.42] : mode === 'sit' ? [-0.03, -0.3, 0.34] : mode === 'low' ? [-0.1, 0.04, 0.28] : [-0.105, 0.14, 0.27 - recoil * 0.04];
   const gq = quat.multiply(quat.create(), cq, E(-pd * (mode === 'aim' ? 0.4 : 1) - recoil * 6, pistol ? 0 : -4, pistol ? 0 : 6));
   const gp = vec3.transformQuat([0, 0, 0], off, cq);
   vec3.add(gp, gp, ch0);

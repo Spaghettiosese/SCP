@@ -222,6 +222,7 @@ export class Player {
       const h = hitscan(g, e, d, 250, null, { ignoreTeam: 'mtf' });
       const end = h ? h.point : [e[0] + d[0] * 200, e[1] + d[1] * 200, e[2] + d[2] * 200];
       if (i === 0 || i % 3 === 0) g.effects.tracer(muzzle, end, [3.4, 2.4, 1.2], 330);
+      if (window.__dbgShots && window.__dbgShots-- > 0) console.log('SHOT', JSON.stringify({ tgt: window.__tgt, e: e.map((v) => +v.toFixed(2)), d: d.map((v) => +v.toFixed(3)), hit: h && { t: +h.t.toFixed(2), actor: h.actor && h.actor.name, hp: h.actor && h.actor.hp, mat: h.material, p: h.point.map((v) => +v.toFixed(2)) } }));
       if (!h) continue;
       if (h.actor) {
         const rng = w.range, dist = h.dist, fall = dist < rng[0] ? 1 : dist > rng[1] ? rng[2] : 1 - (1 - rng[2]) * (dist - rng[0]) / (rng[1] - rng[0]);
@@ -236,7 +237,7 @@ export class Player {
     if (anyHit) { this.stats.hits++; g.hud.hitmarker(killed, head); g.audio.hitmarker(killed); }
     // camera kick
     const [kv, kh] = w.recoil;
-    this.kickV[0] += kv * 0.9 * (1 - ads * 0.35);
+    this.kickV[0] += kv * 0.22 * (1 - ads * 0.35);
     this.pitch += kv * 0.0075 * (1 - ads * 0.3);
     this.yaw += (Math.random() - 0.45) * kh * 0.006;
     this.shake = Math.min(1, this.shake + kv * 0.05);

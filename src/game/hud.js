@@ -10,7 +10,13 @@ import { clamp } from '../util.js';
 const $ = (id) => document.getElementById(id);
 
 // ---------------------------------------------------------------- icons
+const silCache = new Map();
 export function weaponSilhouette(id, w = 220, h = 70) {
+  const key = id + ':' + w + 'x' + h;
+  if (!silCache.has(key)) silCache.set(key, drawSilhouette(id, w, h));
+  return silCache.get(key);
+}
+function drawSilhouette(id, w, h) {
   const def = WEAPONS[id];
   const c = document.createElement('canvas'); c.width = w; c.height = h;
   const x = c.getContext('2d');

@@ -85,18 +85,19 @@ export class Director {
     g.searchTarget = t > 18 ? f.p : null;
     // shots
     let cam;
-    if (t < 8) { // exterior wide: storm, forest, lights of the facility
+    if (t < 8) { // exterior: chase alongside the bird over the storm-lashed forest
       const k = t / 8;
-      cam = { pos: lerp3([-40, 16, -120], [-30, 14, -105], k), target: lerp3(f.p, [f.p[0], f.p[1] - 2, f.p[2]], 0.5), fov: 48 };
-    } else if (t < 15.5) { // cabin: the squad, open doors, rain outside
+      const side = vec3.transformMat4([0, 0, 0], [-16 + k * 4, 3 - k * 2, -10 + k * 14], W);
+      cam = { pos: side, target: vec3.transformMat4([0, 0, 0], [0, 1.2, 1.5], W), fov: 50 };
+    } else if (t < 15.5) { // cabin: from outside the open door, the squad facing us, rain behind
       const k = (t - 8) / 7.5;
-      cam = { pos: vec3.transformMat4([0, 0, 0], [0.05 + k * 0.1, 1.72, 1.55], W), target: vec3.transformMat4([0, 0, 0], [0.2, 1.25, -0.8], W), fov: 70 };
+      cam = { pos: vec3.transformMat4([0, 0, 0], [1.95 - k * 0.25, 1.32, -0.3 + k * 0.2], W), target: vec3.transformMat4([0, 0, 0], [0.4, 1.72, -0.3], W), fov: 64 };
     } else if (t < 22) { // close on Kestrel
       const k = (t - 15.5) / 6.5;
-      cam = { pos: vec3.transformMat4([0, 0, 0], [1.55 - k * 0.1, 1.62, -0.55 + k * 0.1], W), target: vec3.transformMat4([0, 0, 0], [0.55, 1.45, -0.85], W), fov: 42 };
-    } else if (t < 30.5) { // from the gate: the bird comes down through the rain
+      cam = { pos: vec3.transformMat4([0, 0, 0], [1.5 - k * 0.12, 1.95, -0.5 + k * 0.08], W), target: vec3.transformMat4([0, 0, 0], [0.62, 1.86, -0.9], W), fov: 38 };
+    } else if (t < 30.5) { // from the field: the bird comes down through the rain onto the pad
       const k = (t - 22) / 8.5;
-      cam = { pos: lerp3([7, 1.6, -28], [5, 1.4, -30], k), target: lerp3(f.p, [0, 1.5, -42], 0.3), fov: 50 };
+      cam = { pos: lerp3([-9, 1.7, -31.5], [-7.5, 1.5, -32.5], k), target: lerp3(f.p, [0, 1.8, -42], 0.35), fov: 52 };
     } else { // first person handoff: from the cabin door
       const k = clamp((t - 30.5) / 2.5, 0, 1);
       const ps = g.level.markers.playerStart1;

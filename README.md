@@ -65,3 +65,9 @@ tools/dev.html     model/animation inspection harness; tools/shots.cjs headless 
 ```
 
 Debug URL flags: `?auto=a1|a2|173&nolock` jumps straight into an area, `&fps` shows frame stats.
+
+## Testing
+- `npm test` — Node smoke tests (weapon models, clips, aim rig, physics, nav).
+- `?auto=a1&nolock&god=1&sim=75&fire=1&pilot=1&pos=[0,0,-14]` — headless logic run: a bot plays
+  the whole demo (clear yard → terminal → defend → elevator → power → SCP-173 → complete) and
+  logs `SIM {...}` to the console.
